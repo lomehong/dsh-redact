@@ -51,6 +51,18 @@ UI 展示 / 工具执行 / 会话记录 ←── [llm/stream 入站] 占位符�
 HTTP API（同源回环；写路由 sameOrigin 校验）：`GET|PUT /redact/api/config`、
 `GET /redact/api/status`、`POST /redact/api/test`、`POST /redact/api/clear-maps`。
 
+## 版本兼容
+
+| dsh 版本 | 状态 | 说明 |
+|---|---|---|
+| 0.1.1-rc.2 | ✅ | 可变请求走原地重赋路径（当前现役运行时实测形态） |
+| 0.1.2-alpha.3 | ✅ | 冻结请求（agent-loop deepFreeze）走克隆二次下发路径；settings 迁移至 `SettingsProvider.register`（rc.2 即已内置，双版本同 API） |
+| 0.1.2-alpha.4 | ✅ | 对照 monorepo 源码逐契约 diff 核对：llm/cordis/settings/webserver 零变化，agent-loop 仅类型标注（SessionSeq），client 为 UI 性能（keyed observables/聊天节流）与增量类型；97 用例回归全绿，无需改动 |
+
+兼容要点（0.1.2 起）：上游 invariant 对带 `markAgentLoopRequest` 标记的请求做
+「messages ≡ deriveMessages」重建校验，脱敏后的请求以无标记克隆形态二次下发，
+是上游设计内唯一的请求改写合规形态。
+
 ## 已知边界
 
 - 正文恰好包含 `[[TEL_1]]` 形态的字面量会被当作占位符（概率极低，README 明示）；
