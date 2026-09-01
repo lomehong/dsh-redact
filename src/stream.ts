@@ -253,24 +253,49 @@ export interface StreamDeps {
   rules: () => readonly CompiledRule[]
   /** 入站占位符还原开关。 */
   restore: () => boolean
+  /** 冻结请求（0.1.2 起 agent-loop 对请求 deepFreeze）时的出站通道：
+   *  以脱敏后的克隆再次经 llm.stream 下发（提供方负责解析 llm 服务）。
+   *  缺省时冻结请求只能放弃出站脱敏（降级不生效，不阻断调用）。 */
+  streamDirect?: (options: GenerateOptionsLike) => AsyncIterable<StreamChunkLike>
 }
+
+/** 本插件经 streamDirect 二次下发的请求（进程内 WeakSet）：
+ *  重入的 waterfall 派发里跳过出站脱敏与入站还原——还原统一在外层包装一次。
+ *  上游 invariant 对带 markAgentLoopRequest 标记的原始请求做重建校验，
+ *  克隆天然不带标记，恰好是改写请求的唯一合规形态。 */
+const NESTED_REQUESTS = new WeakSet<object>()
 
 /** llm/stream 监听器主体：`(options, next) => Promise<AsyncIterable>`。
  *  cordis waterfall 会 await 监听器返回值，Promise 形态合法。 */
 export function makeStreamListener(deps: StreamDeps): (options: GenerateOptionsLike, next: () => AsyncIterable<StreamChunkLike>) => Promise<AsyncIterable<StreamChunkLike>> {
   return async (options, next) => {
-    try {
-      const activeRules = deps.rules()
-      if (activeRules.length > 0) {
-        const hits = maskOutbound(options, activeRules, deps.mapFor(options))
-        deps.onHits(hits)
+    const nested = NESTED_REQUESTS.has(options)
+    let chunks: AsyncIterable<StreamChunkLike> | undefined
+    if (!nested) {
+      try {
+        const activeRules = deps.rules()
+        if (activeRules.length > 0) {
+          if (!Object.isFrozen(options)) {
+            // 可变请求（0.1.1 及一次性调用）：原地重赋 messages/system
+            deps.onHits(maskOutbound(options, activeRules, deps.mapFor(options)))
+          } else if (deps.streamDirect !== undefined) {
+            // 冻结请求（0.1.2 agent-loop deepFreeze）：浅克隆后掩蔽并二次下发。
+            // 其余冻结字段（tools/signal 等）共享引用，适配器只读，安全。
+            const clone: GenerateOptionsLike = { ...options }
+            NESTED_REQUESTS.add(clone)
+            const map = deps.mapFor(options)
+            deps.onHits(maskOutbound(clone, activeRules, map))
+            chunks = await deps.streamDirect(clone)
+          }
+          // 冻结且无 streamDirect：放弃出站脱敏（宿主不支持二次下发），不阻断调用
+        }
+      } catch {
+        /* 出站脱敏失败：放原文，不打断调用 */
       }
-    } catch {
-      /* 出站脱敏失败：放原文，不打断调用 */
     }
-    const chunks = await next()
+    if (chunks === undefined) chunks = await next()
     try {
-      if (!deps.restore()) return chunks
+      if (nested || !deps.restore()) return chunks
       const reverse = deps.mapFor(options).reverse
       return restoreChunks(chunks, new PlaceholderRestorer(reverse), reverse)
     } catch {

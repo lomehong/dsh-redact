@@ -131,6 +131,10 @@ export interface StreamDeps {
     rules: () => readonly CompiledRule[];
     /** 入站占位符还原开关。 */
     restore: () => boolean;
+    /** 冻结请求（0.1.2 起 agent-loop 对请求 deepFreeze）时的出站通道：
+     *  以脱敏后的克隆再次经 llm.stream 下发（提供方负责解析 llm 服务）。
+     *  缺省时冻结请求只能放弃出站脱敏（降级不生效，不阻断调用）。 */
+    streamDirect?: (options: GenerateOptionsLike) => AsyncIterable<StreamChunkLike>;
 }
 /** llm/stream 监听器主体：`(options, next) => Promise<AsyncIterable>`。
  *  cordis waterfall 会 await 监听器返回值，Promise 形态合法。 */

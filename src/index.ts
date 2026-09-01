@@ -15,7 +15,6 @@
  */
 import { join } from 'node:path'
 import z from '@deepseek-ai/schemastery'
-import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
 import type { Context } from '@deepseek-ai/cordis'
 import {
   builtinRules,
@@ -71,12 +70,27 @@ export const Config = z.object({
 
 export const name = 'redact'
 
-const NS = settingsNamespace('redact')
+const NS = 'redact'
 
 /** llm/stream waterfall 的结构化视图（dsh-llm 在 cordis Events 上的声明）。
  *  监听器可返回 Promise，cordis waterfall 会 await。 */
 interface LlmStreamEvents {
   on(event: 'llm/stream', listener: (options: GenerateOptionsLike, next: () => AsyncIterable<StreamChunkLike>) => Promise<AsyncIterable<StreamChunkLike>> | AsyncIterable<StreamChunkLike>): void
+}
+
+/** dsh settings 服务的最小结构视图（0.1.1-rc.2 与 0.1.2+ 同款 register API）。 */
+interface SettingsProviderLike {
+  register(ns: string, schema: unknown, options?: { base?: unknown }): {
+    get(): RedactConfig
+    watch(callback: (next: RedactConfig, prev: RedactConfig) => void | Promise<void>): () => void
+    update(patch: object): Promise<void>
+    replace(section: object): Promise<void>
+  }
+}
+
+/** dsh llm 服务的最小结构视图（冻结请求二次下发用）。 */
+interface LlmStreamServiceLike {
+  stream?(options: GenerateOptionsLike): AsyncIterable<StreamChunkLike>
 }
 
 /** UI 提交的配置规范化与合法性检查（自定义正则当场编译，非法拒绝保存）。 */
@@ -131,17 +145,28 @@ export async function apply(ctx: Context, config: RedactConfig): Promise<void> {
     return (line: string) => { process.stdout.write(`[redact] ${line}\n`) }
   })()
 
-  // ── 配置来源：settings 节（热重载），组合层 config 为基线 ──
+  // ── 配置来源：settings.register（0.1.1-rc.2 与 0.1.2+ 同款 API）。
+  // 组合层 config 为 base 基线；scope.get 为解析值；watch 热重载；replace 供 UI 整节保存 ──
   let readConfig: () => RedactConfig = () => config
-  installSettingsSection(ctx, NS, Config, config, {
-    setSource: (source: () => RedactConfig) => { readConfig = source },
-    onChange: () => {
-      try {
-        rebuild(readConfig())
-      } catch (error) {
-        log(`配置变更应用失败：${error instanceof Error ? error.message : String(error)}`)
-      }
-    },
+  let replaceConfigBySettings: ((next: RedactConfig) => Promise<void>) | undefined
+  const rebuildFromSettings = (): void => {
+    try {
+      rebuild(readConfig())
+    } catch (error) {
+      log(`配置变更应用失败：${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+  ctx.inject(['settings'], (sctx: unknown) => {
+    const settings = (sctx as { settings?: SettingsProviderLike }).settings
+    if (settings === undefined || typeof settings.register !== 'function') return
+    try {
+      const scope = settings.register(NS, Config, { base: config })
+      readConfig = () => scope.get()
+      scope.watch(() => rebuildFromSettings())
+      replaceConfigBySettings = (next) => scope.replace(next)
+    } catch (error) {
+      log(`设置节注册失败（配置退回组合层基线）：${error instanceof Error ? error.message : String(error)}`)
+    }
   })
 
   // ── 运行时 ──
@@ -206,6 +231,7 @@ export async function apply(ctx: Context, config: RedactConfig): Promise<void> {
     const sid = typeof options?.sessionId === 'string' && options.sessionId !== '' ? options.sessionId : 'global'
     return store.sessionMap(sid, Date.now())
   }
+  let warnedNoLlm = false
   const events = ctx as unknown as LlmStreamEvents
   events.on('llm/stream', makeStreamListener({
     mapFor,
@@ -217,6 +243,18 @@ export async function apply(ctx: Context, config: RedactConfig): Promise<void> {
     },
     rules: () => (rt.config.maskLlm ? rt.rules : []),
     restore: () => rt.config.restoreOutput,
+    streamDirect: (options) => {
+      // 0.1.2 起 agent-loop 对请求 deepFreeze：克隆脱敏后经 llm 服务二次下发
+      const llm = (ctx as unknown as { get(name: string): unknown }).get('llm') as LlmStreamServiceLike | undefined
+      if (llm === undefined || typeof llm.stream !== 'function') {
+        if (!warnedNoLlm) {
+          warnedNoLlm = true
+          log('冻结请求环境下 llm 服务不可用，出站脱敏降级为不生效（还原仍工作）')
+        }
+        throw new Error('llm service unavailable')
+      }
+      return llm.stream(options)
+    },
   }))
 
   // ── 日志打码（logger 为 cordis 内建服务，缺席时跳过） ──
@@ -237,16 +275,6 @@ export async function apply(ctx: Context, config: RedactConfig): Promise<void> {
   ctx.effect(() => () => clearInterval(timer))
 
   // ── HTTP API ──
-  let writeSettings: ((section: RedactConfig) => Promise<void>) | undefined
-  ctx.inject(['settings'], (sctx: unknown) => {
-    const svc = (sctx as { settings: { replace?: (ns: string, section: unknown) => Promise<void>; update?: (ns: string, patch: unknown) => Promise<void> } }).settings
-    if (svc.replace !== undefined) {
-      writeSettings = async (next) => { await svc.replace!(NS, next) }
-    } else if (svc.update !== undefined) {
-      writeSettings = async (next) => { await svc.update!(NS, next) }
-    }
-  })
-
   const statusProvider: StatusProvider = {
     config: () => readConfig(),
     stats: () => ({
@@ -260,8 +288,8 @@ export async function apply(ctx: Context, config: RedactConfig): Promise<void> {
       persist()
     },
     replaceConfig: async (next) => {
-      if (writeSettings !== undefined) {
-        await writeSettings(next)
+      if (replaceConfigBySettings !== undefined) {
+        await replaceConfigBySettings(next)
         return
       }
       throw new Error('settings 服务不可用（组合层为只读基线）')

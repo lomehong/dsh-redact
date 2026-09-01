@@ -15,7 +15,10 @@
     },
     "./package.json": "./package.json"
   },
-  "files": ["lib", "cordis.patch.yml"],
+  "files": [
+    "lib",
+    "cordis.patch.yml"
+  ],
   "dsh": {
     "client": {
       "inject": [
@@ -39,12 +42,10 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.0",
-    "@deepseek-ai/dsh-settings": ">=0.0.1-rc.1",
     "@deepseek-ai/schemastery": ">=0.1.0"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-settings": ">=0.0.1-rc.1",
     "@deepseek-ai/schemastery": ">=0.1.0",
     "@types/node": "^20.0.0",
     "@types/react": "~18.3.1",

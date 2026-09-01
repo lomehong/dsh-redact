@@ -1,30 +1,13 @@
 /**
  * 编排层集成测试：mock 宿主 cordis 上下文（事件注册 / 服务发现 / webServer 路由 /
  * this 陷阱 logger），走 apply() 全流程验证 llm/stream 监听注册、出站脱敏、入站还原、
- * 配置热重载、HTTP API（config/status/test/clear-maps）与日志打码装配。
- * 另含真实 cordis Context 冒烟：真实 LoggerService 上验证日志包装与 effect 清理。
+ * settings.register 配置热重载、HTTP API（config/status/test/clear-maps）与日志打码装配。
+ * 设置服务 mock 语义对齐 0.1.1-rc.2 / 0.1.2+ 的 SettingsProvider.register。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-
-vi.mock('@deepseek-ai/dsh-settings', () => {
-  // 语义对齐真实 installSettingsSection：setSource 提供热读取；settings 服务的
-  // replace(NS, section) 落入对应节并触发 onChange（UI 保存 → 热生效链路）
-  const sections = new Map<string, { store: { current: unknown }; opts: { onChange?: () => void } }>()
-  return {
-    installSettingsSection: vi.fn((_ctx: unknown, ns: string, _schema: unknown, initial: unknown, opts: { setSource: (s: () => unknown) => void; onChange?: () => void }) => {
-      const store = { current: initial }
-      opts.setSource(() => store.current)
-      sections.set(ns, { store, opts })
-    }),
-    settingsNamespace: (ns: string) => ns,
-    __sections: sections,
-  }
-})
-
-import * as settingsModule from '@deepseek-ai/dsh-settings'
 
 import { apply, normalizeConfigInput, type RedactConfig } from '../src/index.ts'
 import type { GenerateOptionsLike, StreamChunkLike } from '../src/stream.ts'
@@ -74,19 +57,36 @@ function makeHarness() {
     get: () => undefined,
     on: (event: string, listener: (payload: never, next: never) => unknown) => { (listeners[event] ??= []).push(listener) },
     inject: (names: string[], fn: (scoped: unknown) => void) => {
-      if (names.includes('webServer')) fn({ webServer, effect: (f: () => () => void) => { disposers.push(f()) } })
-      else fn({
-        settings: {
-          replace: async (ns: string, section: unknown) => {
-            settingsWrites.push(section)
-            const entry = (settingsModule as unknown as { __sections: Map<string, { store: { current: unknown }; opts: { onChange?: () => void } }> }).__sections.get(ns)
-            if (entry !== undefined) {
-              entry.store.current = section
-              entry.opts.onChange?.()
-            }
-          },
+      if (names.includes('webServer')) {
+        fn({ webServer, effect: (f: () => () => void) => { disposers.push(f()) } })
+        return
+      }
+      // settings 服务 mock：语义对齐 SettingsProvider.register（get/watch/update/replace）
+      const settingsService = {
+        register(_ns: string, _schema: unknown, options?: { base?: unknown }) {
+          const scope: { base: unknown; user: Record<string, unknown>; watchers: Set<(next: unknown) => void> } = {
+            base: options?.base, user: {}, watchers: new Set(),
+          }
+          const get = (): Record<string, unknown> => ({ ...((scope.base ?? {}) as Record<string, unknown>), ...scope.user })
+          return {
+            get,
+            watch: (cb: (next: unknown) => void) => {
+              scope.watchers.add(cb)
+              return () => { scope.watchers.delete(cb) }
+            },
+            update: async (patch: Record<string, unknown>) => {
+              Object.assign(scope.user, patch)
+              for (const cb of [...scope.watchers]) cb(get())
+            },
+            replace: async (section: Record<string, unknown>) => {
+              scope.user = { ...section }
+              settingsWrites.push({ ...section })
+              for (const cb of [...scope.watchers]) cb(get())
+            },
+          }
         },
-      })
+      }
+      fn({ settings: settingsService, effect: (f: () => () => void) => { disposers.push(f()) } })
     },
     effect: (f: () => () => void) => { disposers.push(f()) },
   }

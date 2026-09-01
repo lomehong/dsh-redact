@@ -209,6 +209,91 @@ describe('restoreChunks 流处理', () => {
   })
 })
 
+describe('冻结请求（0.1.2 agent-loop deepFreeze）', () => {
+  function frozenOptions(text: string, system?: string): GenerateOptionsLike {
+    return Object.freeze({
+      provider: 'p', model: 'm', sessionId: 's1',
+      messages: Object.freeze([textMessage(text)]),
+      ...(system !== undefined ? { system } : {}),
+    }) as unknown as GenerateOptionsLike
+  }
+
+  it('冻结 + streamDirect：克隆脱敏二次下发，原请求不动，还原只在外层一次', async () => {
+    const map = createMaskMap()
+    let hitCount = 0
+    const listener = makeStreamListener({
+      mapFor: () => map,
+      onHits: (hits) => { hitCount += hits.length },
+      rules: () => rules,
+      restore: () => true,
+      streamDirect: (clone) =>
+        // 模拟真实二次派发：重入同一监听器（WeakSet 命中 → 跳过脱敏与还原）
+        listener(clone, async () => (async function* () {
+          yield { type: 'text-delta', index: 0, text: '收到 [[TEL_1]]' }
+          yield { type: 'finish', reason: { kind: 'stop' } }
+        })()),
+    })
+    const options = frozenOptions('手机 13812345678', '热线 13912345678')
+    const result = await listener(options, async () => {
+      throw new Error('冻结路径不应调用 next()')
+    })
+    const chunks = await collect(result)
+    expect((options.messages[0].content[0] as { text: string }).text).toBe('手机 13812345678')
+    expect(options.system).toBe('热线 13912345678')
+    expect((chunks[0] as { text: string }).text).toBe('收到 13812345678')
+    expect(chunks[1].type).toBe('finish')
+    expect(hitCount).toBe(2) // 消息 1 次 + system 1 次
+  })
+
+  it('冻结 + streamDirect 抛异常 → 回退 next() 原文放行', async () => {
+    const listener = makeStreamListener({
+      mapFor: () => createMaskMap(),
+      onHits: () => {},
+      rules: () => rules,
+      restore: () => true,
+      streamDirect: () => { throw new Error('llm service unavailable') },
+    })
+    const options = frozenOptions('手机 13812345678')
+    let nextCalled = false
+    const result = await listener(options, async () => {
+      nextCalled = true
+      return (async function* () { yield { type: 'text-delta', index: 0, text: 'plain' } })()
+    })
+    const chunks = await collect(result)
+    expect(nextCalled).toBe(true)
+    expect((chunks[0] as { text: string }).text).toBe('plain')
+  })
+
+  it('冻结 + 无 streamDirect：放行原文（降级不生效，不阻断）', async () => {
+    const listener = makeStreamListener({ mapFor: () => createMaskMap(), onHits: () => {}, rules: () => rules, restore: () => true })
+    const options = frozenOptions('手机 13812345678')
+    let nextCalled = false
+    const result = await listener(options, async () => {
+      nextCalled = true
+      return (async function* () { yield { type: 'text-delta', index: 0, text: 'plain [[TEL_1]]' } })()
+    })
+    const chunks = await collect(result)
+    expect(nextCalled).toBe(true)
+    expect((chunks[0] as { text: string }).text).toBe('plain [[TEL_1]]')
+  })
+
+  it('可变请求仍走原地重赋（不触发二次下发）', async () => {
+    let nestedCalls = 0
+    const listener = makeStreamListener({
+      mapFor: () => createMaskMap(),
+      onHits: () => {},
+      rules: () => rules,
+      restore: () => true,
+      streamDirect: () => { nestedCalls++; return (async function* () { yield { type: 'finish', reason: { kind: 'stop' } } })() },
+    })
+    const options: GenerateOptionsLike = { provider: 'p', model: 'm', messages: [textMessage('13812345678')] }
+    const result = await listener(options, async () => (async function* () { yield { type: 'text-delta', index: 0, text: 'x' } })())
+    await collect(result)
+    expect((options.messages[0].content[0] as { text: string }).text).toBe('[[TEL_1]]')
+    expect(nestedCalls).toBe(0)
+  })
+})
+
 describe('makeStreamListener 端到端', () => {
   it('出站替换 messages；入站还原；命中统计回调', async () => {
     const map = createMaskMap()
