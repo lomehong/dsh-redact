@@ -59,5 +59,6 @@ export interface MaskResult {
     /** 本次实际替换发生的类别（含重复值命中，用于统计）。 */
     hits: MaskHit[];
 }
-/** 对一段文本做脱敏；map 记账保证同一值全程同一占位符。 */
+/** 对一段文本做脱敏；map 记账保证同一值全程同一占位符。
+ *  占位符先按文本出现顺序预分配（编号 = 首次出现顺序），再从尾向头替换（偏移不失效）。 */
 export declare function maskText(text: string, rules: readonly CompiledRule[], map: MaskMap): MaskResult;

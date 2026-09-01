@@ -148,6 +148,36 @@ describe('还原', () => {
     const { text: masked } = maskText('手机 13812345678', rules(), map)
     expect(restoreText(masked, map.reverse)).toBe('手机 13812345678')
   })
+  it('一段内容多个同类别值：各自占位符、全部可还原', () => {
+    const map = createMaskMap()
+    const original = '张三 13812345678、李四 13912345678、王五 15612345678 各自联系'
+    const { text: masked } = maskText(original, rules(), map)
+    expect(masked).toBe('张三 [[TEL_1]]、李四 [[TEL_2]]、王五 [[TEL_3]] 各自联系')
+    expect(restoreText(masked, map.reverse)).toBe(original)
+  })
+  it('一段内容多类别多值混合：每个值独立占位符、全部可还原', () => {
+    const map = createMaskMap()
+    const original = [
+      '密钥一 sk-abc123def456ghi789',
+      '密钥二 sk-xyz789uvw456rst123',
+      '手机 13812345678 与 18612345678',
+      '邮箱 alice@example.com、bob@test.org',
+      '卡号 4111111111111111',
+      '重复手机 13812345678',
+    ].join('\n')
+    const { text: masked } = maskText(original, rules(), map)
+    expect(masked).toContain('[[SECRET_1]]')
+    expect(masked).toContain('[[SECRET_2]]')
+    expect(masked).toContain('[[TEL_1]]')
+    expect(masked).toContain('[[TEL_2]]')
+    expect(masked).toContain('[[EMAIL_1]]')
+    expect(masked).toContain('[[EMAIL_2]]')
+    expect(masked).toContain('[[BANK_1]]')
+    expect(masked).not.toContain('13812345678')
+    expect(masked).not.toContain('sk-')
+    // 逐值还原回原文（含重复值的两次出现）
+    expect(restoreText(masked, map.reverse)).toBe(original)
+  })
   it('未知同形占位符原样保留', () => {
     const map = createMaskMap()
     expect(restoreText('[[UNKNOWN_9]]', map.reverse)).toBe('[[UNKNOWN_9]]')

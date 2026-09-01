@@ -206,6 +206,8 @@ interface Span {
   end: number
   value: string
   code: string
+  /** 替换前预分配的一致性占位符（保证编号与文本出现顺序一致）。 */
+  placeholder?: string
 }
 
 function collectSpans(text: string, rules: readonly CompiledRule[]): Span[] {
@@ -257,15 +259,19 @@ export interface MaskResult {
   hits: MaskHit[]
 }
 
-/** 对一段文本做脱敏；map 记账保证同一值全程同一占位符。 */
+/** 对一段文本做脱敏；map 记账保证同一值全程同一占位符。
+ *  占位符先按文本出现顺序预分配（编号 = 首次出现顺序），再从尾向头替换（偏移不失效）。 */
 export function maskText(text: string, rules: readonly CompiledRule[], map: MaskMap): MaskResult {
   const spans = collectSpans(text, rules)
   if (spans.length === 0) return { text, hits: [] }
   const hits: MaskHit[] = spans.map((span) => ({ code: span.code, value: span.value }))
+  for (const span of [...spans].sort((a, b) => a.start - b.start)) {
+    span.placeholder = assignPlaceholder(map, span.code, span.value)
+  }
   spans.sort((a, b) => b.start - a.start)
   let out = text
   for (const span of spans) {
-    out = out.slice(0, span.start) + assignPlaceholder(map, span.code, span.value) + out.slice(span.end)
+    out = out.slice(0, span.start) + span.placeholder + out.slice(span.end)
   }
   return { text: out, hits }
 }
