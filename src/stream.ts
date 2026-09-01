@@ -249,7 +249,10 @@ export interface StreamDeps {
   mapFor(options: GenerateOptionsLike): MaskMap
   /** 命中统计回调。 */
   onHits(hits: readonly MaskHit[]): void
+  /** 当前生效的脱敏规则（空数组 = 出站跳过）。 */
   rules: () => readonly CompiledRule[]
+  /** 入站占位符还原开关。 */
+  restore: () => boolean
 }
 
 /** llm/stream 监听器主体：`(options, next) => Promise<AsyncIterable>`。
@@ -267,6 +270,7 @@ export function makeStreamListener(deps: StreamDeps): (options: GenerateOptionsL
     }
     const chunks = await next()
     try {
+      if (!deps.restore()) return chunks
       const reverse = deps.mapFor(options).reverse
       return restoreChunks(chunks, new PlaceholderRestorer(reverse), reverse)
     } catch {

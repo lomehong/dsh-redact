@@ -127,7 +127,10 @@ export interface StreamDeps {
     mapFor(options: GenerateOptionsLike): MaskMap;
     /** 命中统计回调。 */
     onHits(hits: readonly MaskHit[]): void;
+    /** 当前生效的脱敏规则（空数组 = 出站跳过）。 */
     rules: () => readonly CompiledRule[];
+    /** 入站占位符还原开关。 */
+    restore: () => boolean;
 }
 /** llm/stream 监听器主体：`(options, next) => Promise<AsyncIterable>`。
  *  cordis waterfall 会 await 监听器返回值，Promise 形态合法。 */

@@ -214,7 +214,7 @@ describe('makeStreamListener 端到端', () => {
     const map = createMaskMap()
     let hitCount = 0
     const onHits = (hits: readonly MaskHit[]) => { hitCount += hits.length }
-    const listener = makeStreamListener({ mapFor: () => map, onHits, rules: () => rules })
+    const listener = makeStreamListener({ mapFor: () => map, onHits, rules: () => rules, restore: () => true })
     const options: GenerateOptionsLike = {
       provider: 'p', model: 'm',
       messages: [textMessage('手机 13812345678')],
@@ -238,18 +238,30 @@ describe('makeStreamListener 端到端', () => {
   })
   it('规则为空（开关关闭）→ 出入站均原样', async () => {
     const map = createMaskMap()
-    const listener = makeStreamListener({ mapFor: () => map, onHits: () => {}, rules: () => [] })
+    const listener = makeStreamListener({ mapFor: () => map, onHits: () => {}, rules: () => [], restore: () => true })
     const options: GenerateOptionsLike = { provider: 'p', model: 'm', messages: [textMessage('13812345678')] }
     const result = await listener(options, async () => (async function* () { yield { type: 'text-delta', index: 0, text: 'x' } })())
     const chunks = await collect(result)
     expect(chunks).toEqual([{ type: 'text-delta', index: 0, text: 'x' }])
     expect((options.messages[0].content[0] as { text: string }).text).toBe('13812345678')
   })
+  it('restore 开关关闭 → 入站占位符不还原', async () => {
+    const map = createMaskMap()
+    map.reverse.set('[[TEL_1]]', '13812345678')
+    const listener = makeStreamListener({ mapFor: () => map, onHits: () => {}, rules: () => rules, restore: () => false })
+    const result = await listener(
+      { provider: 'p', model: 'm', messages: [] },
+      async () => (async function* () { yield { type: 'text-delta', index: 0, text: '值 [[TEL_1]]' } })(),
+    )
+    const chunks = await collect(result)
+    expect((chunks[0] as { text: string }).text).toBe('值 [[TEL_1]]')
+  })
   it('mapFor 抛异常 → 请求与流原样透传（不打断调用）', async () => {
     const listener = makeStreamListener({
       mapFor: () => { throw new Error('boom') },
       onHits: () => {},
       rules: () => rules,
+      restore: () => true,
     })
     const options: GenerateOptionsLike = { provider: 'p', model: 'm', messages: [textMessage('13812345678')] }
     const result = await listener(options, async () => (async function* () { yield { type: 'text-delta', index: 0, text: 'plain' } })())

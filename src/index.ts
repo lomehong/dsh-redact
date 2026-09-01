@@ -216,6 +216,7 @@ export async function apply(ctx: Context, config: RedactConfig): Promise<void> {
       }
     },
     rules: () => (rt.config.maskLlm ? rt.rules : []),
+    restore: () => rt.config.restoreOutput,
   }))
 
   // ── 日志打码（logger 为 cordis 内建服务，缺席时跳过） ──
