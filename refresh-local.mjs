@@ -9,7 +9,7 @@
  * Restart `dsh web` / DSH Desktop afterwards. Idempotent.
  */
 import { spawnSync } from 'node:child_process'
-import { cpSync, existsSync, rmSync } from 'node:fs'
+import { cpSync, existsSync, realpathSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -19,6 +19,14 @@ const home = process.env.DSH_HOME ?? join(homedir(), '.dsh')
 const profileDir = join(home, 'profiles', 'web')
 const pkgName = '@dsh-extra/dsh-redact'
 const dest = join(profileDir, 'node_modules', ...pkgName.split('/'))
+
+// link: 安装时 dest 就是本仓库（realpath 相同）：lib 已是构建产物本体，无需也不可复制
+try {
+  if (realpathSync(dest) === realpathSync(repo)) {
+    console.log('[redact] profile 中为 link: 安装（即本仓库），lib 构建后即为生效产物，无需复制。重启 dsh 即可加载。')
+    process.exit(0)
+  }
+} catch { /* dest 不存在时走下方常规检查 */ }
 
 if (!existsSync(dest)) {
   console.error(`[redact] ${pkgName} 尚未安装到 profile（${dest} 不存在）。先在 profile 里 pnpm/npm add file: 本目录`)
