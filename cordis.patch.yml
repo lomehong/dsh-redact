@@ -1,0 +1,5 @@
+- insert:
+    - id: redact
+      name: '@dsh-extra/dsh-redact'
+      # llm 非硬依赖：服务缺席时仅日志打码与配置节生效（llm/stream 监听无事可做）。
+      config: {}
