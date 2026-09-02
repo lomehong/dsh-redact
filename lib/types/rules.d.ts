@@ -33,6 +33,9 @@ export interface CompiledRule {
     validate?: SpanValidator;
     /** 命中后取第几个捕获组作为脱敏值（缺省 0 = 整个匹配）。 */
     group?: number;
+    /** 别名替换：命中后直接替换为该固定串——不入映射表、不做还原（单向）。
+     *  与占位符规则的本质差异：无 [[CODE_N]] 编号、无 reverse 条目。 */
+    replacement?: string;
 }
 /** 规则上限：防 YAML 手改/异常配置拖垮热路径。 */
 export declare const MAX_CUSTOM_RULES = 50;
@@ -47,6 +50,24 @@ export interface CustomRuleInput {
 export declare function customRuleCode(name: string): string;
 /** 编译自定义规则；正则非法/超限的条目进入 errors（跳过不参与匹配）。 */
 export declare function compileCustomRules(rules: readonly CustomRuleInput[]): {
+    rules: CompiledRule[];
+    errors: string[];
+};
+export declare const MAX_TERM_RULES = 100;
+export declare const MAX_TERM_LENGTH = 64;
+export declare const MAX_REPLACEMENT_LENGTH = 64;
+export interface TermRuleInput {
+    /** 原词（字面量匹配，非正则）。 */
+    term: string;
+    /** 固定替换词（确定性替换，不做还原映射）。 */
+    replacement: string;
+}
+export declare function escapeRegExp(text: string): string;
+/** 编译别名替换规则：字面量匹配 → 固定串直接替换。
+ *  与占位符规则的本质差异：替换串固定、不入映射表、不做还原（单向）。
+ *  重叠的长词优先（"腾讯云"应先于"腾讯"命中）：按原词长度降序收集。
+ *  rules 缺席（旧配置/旧持久化节）时视为空。 */
+export declare function compileTermRules(rules: readonly TermRuleInput[] | undefined): {
     rules: CompiledRule[];
     errors: string[];
 };

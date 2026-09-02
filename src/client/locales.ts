@@ -32,6 +32,12 @@ export type RedactKey =
   | 'ruleAdd'
   | 'ruleDelete'
   | 'ruleEmpty'
+  | 'aliasesTitle'
+  | 'aliasesHint'
+  | 'aliasTerm'
+  | 'aliasReplacement'
+  | 'aliasAdd'
+  | 'aliasEmpty'
   | 'statsTitle'
   | 'statCount'
   | 'statLastAt'
@@ -78,6 +84,12 @@ export const zh: Record<RedactKey, string> = {
   ruleAdd: '添加规则',
   ruleDelete: '删除',
   ruleEmpty: '暂无自定义规则',
+  aliasesTitle: '实体别名替换（原词 → 固定替换词）',
+  aliasesHint: '单向确定性替换：原词在发往 LLM 与日志中替换为固定词，不做还原（模型与输出只见替换词）。优先级低于敏感数据检测——与密钥/证件等命中重叠时以脱敏为准。原词按字面量匹配（非正则），更长的原词优先。',
+  aliasTerm: '原词（如：腾讯）',
+  aliasReplacement: '替换为（如：某公司）',
+  aliasAdd: '添加别名',
+  aliasEmpty: '暂无别名规则',
   statsTitle: '命中统计（累计）',
   statCount: '命中',
   statLastAt: '最近',
@@ -125,6 +137,12 @@ export const en: Record<RedactKey, string> = {
   ruleAdd: 'Add rule',
   ruleDelete: 'Delete',
   ruleEmpty: 'No custom rules yet',
+  aliasesTitle: 'Entity aliases (term → fixed replacement)',
+  aliasesHint: 'One-way deterministic substitution: terms are replaced with the fixed word in outbound LLM traffic and logs, with no restore (the model and output only ever see the replacement). Lower priority than sensitive-data detection — when overlapping a secret/ID hit, masking wins. Terms match literally (not regex); longer terms win.',
+  aliasTerm: 'Term (e.g. Acme)',
+  aliasReplacement: 'Replace with (e.g. A company)',
+  aliasAdd: 'Add alias',
+  aliasEmpty: 'No alias rules yet',
   statsTitle: 'Hit statistics (cumulative)',
   statCount: 'Hits',
   statLastAt: 'Last at',

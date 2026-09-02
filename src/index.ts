@@ -19,10 +19,12 @@ import type { Context } from '@deepseek-ai/cordis'
 import {
   builtinRules,
   compileCustomRules,
+  compileTermRules,
   createMaskMap,
   maskText,
   type CompiledRule,
   type CustomRuleInput,
+  type TermRuleInput,
 } from './rules.ts'
 import { MappingStore } from './mapping.ts'
 import { loadState, saveState, stateFilePath, dshHome } from './persist.ts'
@@ -44,9 +46,11 @@ export interface RedactConfig {
     email: boolean
   }
   customRules: CustomRuleInput[]
+  /** 实体别名替换：原词 → 固定替换词（单向，不还原）。旧配置/组合基线可缺席。 */
+  aliases?: TermRuleInput[]
 }
 
-export const Config = z.object({
+export const Config: z<RedactConfig> = z.object({
   /** 发往 LLM 的消息脱敏（总开关）。 */
   maskLlm: z.boolean().default(true),
   /** 模型输出中的占位符还原为真实值。 */
@@ -65,6 +69,10 @@ export const Config = z.object({
   customRules: z.array(z.object({
     name: z.string(),
     pattern: z.string(),
+  })).default([]),
+  aliases: z.array(z.object({
+    term: z.string(),
+    replacement: z.string(),
   })).default([]),
 })
 
@@ -115,6 +123,24 @@ export function normalizeConfigInput(payload: unknown): RedactConfig {
     }
     return { name: ruleName, pattern }
   })
+  // 实体别名：原词字面量匹配 → 固定替换词（单向，不还原）。校验与引擎编译同规。
+  const aliasRaw = Array.isArray(raw.aliases) ? raw.aliases : []
+  if (aliasRaw.length > 100) throw new Error('别名规则超过 100 条上限')
+  const seenAliasTerms = new Set<string>()
+  const aliases = aliasRaw.map((item, index) => {
+    if (item === null || typeof item !== 'object') throw new Error(`aliases[${index}] 必须是对象`)
+    const term = String((item as Record<string, unknown>).term ?? '').trim()
+    const replacement = String((item as Record<string, unknown>).replacement ?? '').trim()
+    if (term === '') throw new Error(`aliases[${index}] 的原词不能为空`)
+    if (replacement === '') throw new Error(`别名「${term}」的替换词不能为空`)
+    if (term.length > 64) throw new Error(`别名「${term.slice(0, 20)}…」的原词超过 64 字符上限`)
+    if (replacement.length > 64) throw new Error(`别名「${term}」的替换词超过 64 字符上限`)
+    if (term === replacement) throw new Error(`别名「${term}」的原词与替换词相同（无意义）`)
+    if (term.startsWith('[[') || replacement.startsWith('[[')) throw new Error(`别名「${term}」的原词/替换词不能是占位符形态 [[CODE_N]]`)
+    if (seenAliasTerms.has(term)) throw new Error(`别名「${term}」重复定义`)
+    seenAliasTerms.add(term)
+    return { term, replacement }
+  })
   return {
     maskLlm: bool(raw.maskLlm, true),
     restoreOutput: bool(raw.restoreOutput, true),
@@ -127,6 +153,7 @@ export function normalizeConfigInput(payload: unknown): RedactConfig {
       email: bool(categoriesRaw.email, true),
     },
     customRules,
+    aliases,
   }
 }
 
@@ -178,15 +205,17 @@ export async function apply(ctx: Context, config: RedactConfig): Promise<void> {
   function compileRules(next: RedactConfig): CompiledRule[] {
     const builtins = builtinRules(next.categories)
     const { rules, errors } = compileCustomRules(next.customRules)
-    rt.ruleErrors = errors
-    for (const message of errors) log(`规则编译警告：${message}`)
-    return [...builtins, ...rules]
+    const term = compileTermRules(next.aliases)
+    rt.ruleErrors = [...errors, ...term.errors]
+    for (const message of rt.ruleErrors) log(`规则编译警告：${message}`)
+    // 别名规则排最末：敏感数据命中优先（重叠时别名让位，绝不在密钥命中区掏洞）
+    return [...builtins, ...rules, ...term.rules]
   }
   function rebuild(next: RedactConfig): void {
     rt.config = next
     rt.rules = compileRules(next)
     const on = Object.entries(next.categories).filter(([, v]) => v).map(([k]) => k)
-    log(`配置已应用：LLM 脱敏=${next.maskLlm ? '开' : '关'} 输出还原=${next.restoreOutput ? '开' : '关'} 日志打码=${next.maskLogs ? '开' : '关'}；内置类别=${on.join(',') || '无'} 自定义规则=${next.customRules.length}`)
+    log(`配置已应用：LLM 脱敏=${next.maskLlm ? '开' : '关'} 输出还原=${next.restoreOutput ? '开' : '关'} 日志打码=${next.maskLogs ? '开' : '关'}；内置类别=${on.join(',') || '无'} 自定义规则=${next.customRules.length} 别名=${next.aliases?.length ?? 0}`)
   }
   rt.rules = compileRules(config)
 

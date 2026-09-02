@@ -1,6 +1,6 @@
 import z from '@deepseek-ai/schemastery';
 import type { Context } from '@deepseek-ai/cordis';
-import { type CustomRuleInput } from './rules.ts';
+import { type CustomRuleInput, type TermRuleInput } from './rules.ts';
 export interface RedactConfig {
     maskLlm: boolean;
     restoreOutput: boolean;
@@ -13,62 +13,10 @@ export interface RedactConfig {
         email: boolean;
     };
     customRules: CustomRuleInput[];
+    /** 实体别名替换：原词 → 固定替换词（单向，不还原）。旧配置/组合基线可缺席。 */
+    aliases?: TermRuleInput[];
 }
-export declare const Config: z<Schemastery.ObjectS<{
-    /** 发往 LLM 的消息脱敏（总开关）。 */
-    maskLlm: z<boolean, boolean>;
-    /** 模型输出中的占位符还原为真实值。 */
-    restoreOutput: z<boolean, boolean>;
-    /** 日志输出打码（只打码不还原）。 */
-    maskLogs: z<boolean, boolean>;
-    categories: z<Schemastery.ObjectS<{
-        secret: z<boolean, boolean>;
-        id: z<boolean, boolean>;
-        bank: z<boolean, boolean>;
-        phone: z<boolean, boolean>;
-        email: z<boolean, boolean>;
-    }>, Schemastery.ObjectT<{
-        secret: z<boolean, boolean>;
-        id: z<boolean, boolean>;
-        bank: z<boolean, boolean>;
-        phone: z<boolean, boolean>;
-        email: z<boolean, boolean>;
-    }>>;
-    customRules: z<({
-        name?: string | null;
-        pattern?: string | null;
-    } & import("@deepseek-ai/cosmokit").Dict)[], Schemastery.ObjectT<{
-        name: z<string, string>;
-        pattern: z<string, string>;
-    }>[]>;
-}>, Schemastery.ObjectT<{
-    /** 发往 LLM 的消息脱敏（总开关）。 */
-    maskLlm: z<boolean, boolean>;
-    /** 模型输出中的占位符还原为真实值。 */
-    restoreOutput: z<boolean, boolean>;
-    /** 日志输出打码（只打码不还原）。 */
-    maskLogs: z<boolean, boolean>;
-    categories: z<Schemastery.ObjectS<{
-        secret: z<boolean, boolean>;
-        id: z<boolean, boolean>;
-        bank: z<boolean, boolean>;
-        phone: z<boolean, boolean>;
-        email: z<boolean, boolean>;
-    }>, Schemastery.ObjectT<{
-        secret: z<boolean, boolean>;
-        id: z<boolean, boolean>;
-        bank: z<boolean, boolean>;
-        phone: z<boolean, boolean>;
-        email: z<boolean, boolean>;
-    }>>;
-    customRules: z<({
-        name?: string | null;
-        pattern?: string | null;
-    } & import("@deepseek-ai/cosmokit").Dict)[], Schemastery.ObjectT<{
-        name: z<string, string>;
-        pattern: z<string, string>;
-    }>[]>;
-}>>;
+export declare const Config: z<RedactConfig>;
 export declare const name = "redact";
 /** UI 提交的配置规范化与合法性检查（自定义正则当场编译，非法拒绝保存）。 */
 export declare function normalizeConfigInput(payload: unknown): RedactConfig;

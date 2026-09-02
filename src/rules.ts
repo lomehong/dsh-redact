@@ -51,6 +51,9 @@ export interface CompiledRule {
   validate?: SpanValidator
   /** 命中后取第几个捕获组作为脱敏值（缺省 0 = 整个匹配）。 */
   group?: number
+  /** 别名替换：命中后直接替换为该固定串——不入映射表、不做还原（单向）。
+   *  与占位符规则的本质差异：无 [[CODE_N]] 编号、无 reverse 条目。 */
+  replacement?: string
 }
 
 /** 规则上限：防 YAML 手改/异常配置拖垮热路径。 */
@@ -199,6 +202,82 @@ export function compileCustomRules(rules: readonly CustomRuleInput[]): { rules: 
   return { rules: out, errors }
 }
 
+/* ─────────────── 实体别名替换（原词 → 固定替换词） ─────────────── */
+
+export const MAX_TERM_RULES = 100
+export const MAX_TERM_LENGTH = 64
+export const MAX_REPLACEMENT_LENGTH = 64
+/** 别名优先级：排在内置（1–5）与自定义正则（6+）之后——敏感数据命中优先，
+ *  别名只处理未被更敏感规则覆盖的部分（绝不在密钥/证件命中区里掏洞）。 */
+const TERM_PRIORITY_BASE = 1000
+
+export interface TermRuleInput {
+  /** 原词（字面量匹配，非正则）。 */
+  term: string
+  /** 固定替换词（确定性替换，不做还原映射）。 */
+  replacement: string
+}
+
+export function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/** 编译别名替换规则：字面量匹配 → 固定串直接替换。
+ *  与占位符规则的本质差异：替换串固定、不入映射表、不做还原（单向）。
+ *  重叠的长词优先（"腾讯云"应先于"腾讯"命中）：按原词长度降序收集。
+ *  rules 缺席（旧配置/旧持久化节）时视为空。 */
+export function compileTermRules(rules: readonly TermRuleInput[] | undefined): { rules: CompiledRule[]; errors: string[] } {
+  const out: CompiledRule[] = []
+  const errors: string[] = []
+  const seenTerms = new Set<string>()
+  const list = Array.isArray(rules) ? rules : []
+  const cleaned = list.map((rule) => ({
+    term: String(rule?.term ?? '').trim(),
+    replacement: String(rule?.replacement ?? '').trim(),
+  }))
+  if (cleaned.length > MAX_TERM_RULES) errors.push(`别名规则超过 ${MAX_TERM_RULES} 条上限，多余条目已忽略`)
+  for (let i = 0; i < cleaned.length && i < MAX_TERM_RULES; i++) {
+    const { term, replacement } = cleaned[i]
+    if (term === '' || replacement === '') {
+      errors.push(`别名规则 #${i + 1}：原词与替换词均不能为空`)
+      continue
+    }
+    if (term.length > MAX_TERM_LENGTH) {
+      errors.push(`别名规则 #${i + 1}：原词超过 ${MAX_TERM_LENGTH} 字符上限`)
+      continue
+    }
+    if (replacement.length > MAX_REPLACEMENT_LENGTH) {
+      errors.push(`别名规则 #${i + 1}：替换词超过 ${MAX_REPLACEMENT_LENGTH} 字符上限`)
+      continue
+    }
+    if (term === replacement) {
+      errors.push(`别名规则 #${i + 1}：原词与替换词相同（无意义）`)
+      continue
+    }
+    // 占位符形态的原词/替换词都会与还原层（[[CODE_N]]）纠缠：一律拒绝。
+    // 注意用非全局副本：PLACEHOLDER_RE 带 g 标志有 lastIndex 状态，test() 会串值。
+    const placeholderForm = /\[\[[A-Z][A-Z0-9]{0,23}_\d{1,10}\]\]/
+    if (placeholderForm.test(term) || placeholderForm.test(replacement)) {
+      errors.push(`别名规则 #${i + 1}：原词/替换词不能是占位符形态 [[CODE_N]]`)
+      continue
+    }
+    if (seenTerms.has(term)) {
+      errors.push(`别名规则 #${i + 1}：原词「${term}」重复（保留先定义的替换）`)
+      continue
+    }
+    seenTerms.add(term)
+    out.push({
+      code: 'ALIAS',
+      priority: TERM_PRIORITY_BASE + out.length,
+      regex: new RegExp(escapeRegExp(term), 'g'),
+      replacement,
+    })
+  }
+  // 重叠别名长词优先（转义后的 source 长度单调对应原词长度）
+  out.sort((a, b) => b.regex.source.length - a.regex.source.length)
+  return { rules: out, errors }
+}
+
 /* ─────────────── 匹配收集与替换 ─────────────── */
 
 interface Span {
@@ -208,6 +287,8 @@ interface Span {
   code: string
   /** 替换前预分配的一致性占位符（保证编号与文本出现顺序一致）。 */
   placeholder?: string
+  /** 别名替换：非 undefined 时直接用该固定串替换（跳过映射表，单向不还原）。 */
+  replacement?: string
 }
 
 function collectSpans(text: string, rules: readonly CompiledRule[]): Span[] {
@@ -217,7 +298,7 @@ function collectSpans(text: string, rules: readonly CompiledRule[]): Span[] {
       for (const span of accepted) {
         if (start < span.end && span.start < end) return // 与高优先级命中重叠：丢弃
       }
-      accepted.push({ start, end, value, code: rule.code })
+      accepted.push({ start, end, value, code: rule.code, ...(rule.replacement !== undefined ? { replacement: rule.replacement } : {}) })
     })
   }
   return accepted
@@ -266,7 +347,8 @@ export function maskText(text: string, rules: readonly CompiledRule[], map: Mask
   if (spans.length === 0) return { text, hits: [] }
   const hits: MaskHit[] = spans.map((span) => ({ code: span.code, value: span.value }))
   for (const span of [...spans].sort((a, b) => a.start - b.start)) {
-    span.placeholder = assignPlaceholder(map, span.code, span.value)
+    // 别名替换：固定串直接替换，不占映射表（单向，无还原条目）
+    span.placeholder = span.replacement ?? assignPlaceholder(map, span.code, span.value)
   }
   spans.sort((a, b) => b.start - a.start)
   let out = text

@@ -17,6 +17,7 @@ interface RedactConfigDto {
   maskLogs: boolean
   categories: { secret: boolean; id: boolean; bank: boolean; phone: boolean; email: boolean }
   customRules: Array<{ name: string; pattern: string }>
+  aliases: Array<{ term: string; replacement: string }>
 }
 
 interface StatsDto {
@@ -81,7 +82,7 @@ async function api<T>(path: string, init?: { method?: string; body?: unknown }):
 const CATEGORY_CODES = ['secret', 'id', 'bank', 'phone', 'email'] as const
 
 const STAT_COLORS: Record<string, string> = {
-  SECRET: c.error, ID: c.warn, BANK: c.warn, TEL: c.accent, EMAIL: c.ok,
+  SECRET: c.error, ID: c.warn, BANK: c.warn, TEL: c.accent, EMAIL: c.ok, ALIAS: c.text,
 }
 
 export function RedactSettingsTab({ t }: RedactSettingsTabInjected): JSX.Element {
@@ -264,6 +265,38 @@ export function RedactSettingsTab({ t }: RedactSettingsTabInjected): JSX.Element
             {stats!.ruleErrors.map((message, i) => <div key={i} style={errorStyle}>{message}</div>)}
           </div>
         )}
+      </div>
+
+      {/* ── 实体别名替换 ── */}
+      <div style={sectionStyle}>
+        <p style={sectionTitleStyle}>{t('aliasesTitle')}</p>
+        <div style={{ ...hintStyle, marginBottom: 8 }}>{t('aliasesHint')}</div>
+        {config.aliases.length === 0 && <div style={hintStyle}>{t('aliasEmpty')}</div>}
+        {config.aliases.map((alias, index) => (
+          <div key={index} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '4px 0' }}>
+            <input
+              value={alias.term}
+              placeholder={t('aliasTerm')}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => update((draft) => { draft.aliases[index].term = e.target.value })}
+              style={{ ...inputStyle, width: 200, fontFamily: 'inherit' }}
+            />
+            <span style={{ fontSize: 13, color: c.textSecondary }}>→</span>
+            <input
+              value={alias.replacement}
+              placeholder={t('aliasReplacement')}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => update((draft) => { draft.aliases[index].replacement = e.target.value })}
+              style={{ ...inputStyle, width: 200, fontFamily: 'inherit' }}
+            />
+            <button type="button" style={btnStyle} onClick={() => update((draft) => { draft.aliases.splice(index, 1) })}>
+              {t('ruleDelete')}
+            </button>
+          </div>
+        ))}
+        <div style={{ marginTop: 8 }}>
+          <button type="button" style={btnStyle} onClick={() => update((draft) => { draft.aliases.push({ term: '', replacement: '' }) })}>
+            + {t('aliasAdd')}
+          </button>
+        </div>
       </div>
 
       {/* ── 测试框 ── */}
