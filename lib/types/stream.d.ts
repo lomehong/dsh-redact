@@ -104,12 +104,16 @@ export declare function maskOutbound(options: GenerateOptionsLike, rules: readon
  */
 export declare class PlaceholderRestorer {
     private readonly reverse;
+    private readonly onRestore?;
     private buffers;
-    constructor(reverse: Map<string, string>);
+    /** 探针审计：每次还原后回报本次处理的占位符形态匹配数（含未知占位——猜测本身即信号）。 */
+    constructor(reverse: Map<string, string>, onRestore?: ((n: number) => void) | undefined);
     /** 喂入一段 delta 文本，返回可安全发出的部分（已还原完整占位符）。 */
     feed(index: number, text: string): string;
     /** 块结束：返回并清空该索引的残余（已还原）。 */
     flush(index: number): string;
+    /** 还原并回报占位符匹配数（探针审计挂钩）。 */
+    private restoreSegment;
     /** 流结束：清空所有残余，按 index 升序返回。 */
     flushAll(): Array<{
         index: number;
@@ -131,6 +135,8 @@ export interface StreamDeps {
     rules: () => readonly CompiledRule[];
     /** 入站占位符还原开关。 */
     restore: () => boolean;
+    /** 探针审计：占位符还原计数回调（可缺席）。 */
+    onRestore?: (options: GenerateOptionsLike, n: number) => void;
     /** 冻结请求（0.1.2 起 agent-loop 对请求 deepFreeze）时的出站通道：
      *  以脱敏后的克隆再次经 llm.stream 下发（提供方负责解析 llm 服务）。
      *  缺省时冻结请求只能放弃出站脱敏（降级不生效，不阻断调用）。 */

@@ -142,7 +142,8 @@ export function maskOutbound(options: GenerateOptionsLike, rules: readonly Compi
 export class PlaceholderRestorer {
   private buffers = new Map<number, string>()
 
-  constructor(private readonly reverse: Map<string, string>) {}
+  /** 探针审计：每次还原后回报本次处理的占位符形态匹配数（含未知占位——猜测本身即信号）。 */
+  constructor(private readonly reverse: Map<string, string>, private readonly onRestore?: (n: number) => void) {}
 
   /** 喂入一段 delta 文本，返回可安全发出的部分（已还原完整占位符）。 */
   feed(index: number, text: string): string {
@@ -150,7 +151,7 @@ export class PlaceholderRestorer {
     const pending = (this.buffers.get(index) ?? '') + text
     const safeEnd = holdbackIndex(pending)
     this.buffers.set(index, pending.slice(safeEnd))
-    return safeEnd === 0 ? '' : restoreText(pending.slice(0, safeEnd), this.reverse)
+    return safeEnd === 0 ? '' : this.restoreSegment(pending.slice(0, safeEnd))
   }
 
   /** 块结束：返回并清空该索引的残余（已还原）。 */
@@ -158,7 +159,18 @@ export class PlaceholderRestorer {
     const pending = this.buffers.get(index)
     if (pending === undefined || pending === '') return ''
     this.buffers.delete(index)
-    return restoreText(pending, this.reverse)
+    return this.restoreSegment(pending)
+  }
+
+  /** 还原并回报占位符匹配数（探针审计挂钩）。 */
+  private restoreSegment(text: string): string {
+    if (this.onRestore !== undefined) {
+      const matches = text.match(/\[\[[A-Z][A-Z0-9]{0,23}_\d{1,10}\]\]/g)
+      if (matches !== null && matches.length > 0) {
+        try { this.onRestore(matches.length) } catch { /* 审计失败不影响还原 */ }
+      }
+    }
+    return restoreText(text, this.reverse)
   }
 
   /** 流结束：清空所有残余，按 index 升序返回。 */
@@ -253,6 +265,8 @@ export interface StreamDeps {
   rules: () => readonly CompiledRule[]
   /** 入站占位符还原开关。 */
   restore: () => boolean
+  /** 探针审计：占位符还原计数回调（可缺席）。 */
+  onRestore?: (options: GenerateOptionsLike, n: number) => void
   /** 冻结请求（0.1.2 起 agent-loop 对请求 deepFreeze）时的出站通道：
    *  以脱敏后的克隆再次经 llm.stream 下发（提供方负责解析 llm 服务）。
    *  缺省时冻结请求只能放弃出站脱敏（降级不生效，不阻断调用）。 */
@@ -297,7 +311,7 @@ export function makeStreamListener(deps: StreamDeps): (options: GenerateOptionsL
     try {
       if (nested || !deps.restore()) return chunks
       const reverse = deps.mapFor(options).reverse
-      return restoreChunks(chunks, new PlaceholderRestorer(reverse), reverse)
+      return restoreChunks(chunks, new PlaceholderRestorer(reverse, (n) => { deps.onRestore?.(options, n) }), reverse)
     } catch {
       return chunks
     }

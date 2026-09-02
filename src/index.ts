@@ -29,6 +29,7 @@ import {
 import { MappingStore } from './mapping.ts'
 import { loadState, saveState, stateFilePath, dshHome } from './persist.ts'
 import { makeStreamListener, type GenerateOptionsLike, type StreamChunkLike } from './stream.ts'
+import { ProbeAudit } from './audit.ts'
 import { installLogMask, type LoggerServiceLike } from './logmask.ts'
 import { registerRedactApi, type StatusProvider } from './api.ts'
 
@@ -222,6 +223,8 @@ export async function apply(ctx: Context, config: RedactConfig): Promise<void> {
   // ── 映射表与持久化（启动载入 → 去抖落盘 → 退出兜底） ──
   const store = new MappingStore()
   const home = dshHome()
+  // 探针行为审计：测试框高频调用 / 单会话占位符还原激增 → 告警（状态接口 + 日志）
+  const audit = new ProbeAudit({ log })
   const persisted = await loadState(home)
   if (persisted !== undefined) {
     store.loadPersistable(persisted.maps, Date.now())
@@ -261,9 +264,17 @@ export async function apply(ctx: Context, config: RedactConfig): Promise<void> {
     return store.sessionMap(sid, Date.now())
   }
   let warnedNoLlm = false
+  const sidOf = (options: GenerateOptionsLike): string => {
+    const sid = typeof options?.sessionId === 'string' && options.sessionId !== '' ? options.sessionId : 'global'
+    return sid
+  }
   const events = ctx as unknown as LlmStreamEvents
   events.on('llm/stream', makeStreamListener({
     mapFor,
+    onRestore: (opts: GenerateOptionsLike, n: number) => {
+      // 探针审计：还原计数按会话记账（模型枚举 [[CODE_N]] 猜测会在对话中连续命中）
+      void audit.recordRestore(sidOf(opts), Date.now(), n)
+    },
     onHits: (hits) => {
       if (hits.length > 0) {
         store.recordHits(hits, Date.now())
@@ -310,8 +321,10 @@ export async function apply(ctx: Context, config: RedactConfig): Promise<void> {
       ...store.snapshotStats(),
       sessions: store.sessionCount(),
       ruleErrors: [...rt.ruleErrors],
+      audit: audit.snapshot(),
     }),
     test: (text) => maskText(text, rt.rules, createMaskMap()).text, // 一次性映射：不污染会话编号与统计
+    onTestCall: () => { audit.recordTestCall(Date.now()) },
     clearMaps: () => {
       store.clearSessions()
       persist()

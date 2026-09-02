@@ -13,6 +13,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { normalizeConfigInput, type RedactConfig } from './index.ts'
+import type { AuditWarning } from './audit.ts'
 
 export interface StatusProvider {
   config: () => RedactConfig
@@ -20,8 +21,12 @@ export interface StatusProvider {
     categories: Record<string, { count: number; lastAt?: number }>
     sessions: number
     ruleErrors: string[]
+    /** 探针行为审计告警（新→旧）。 */
+    audit?: AuditWarning[]
   }
   test: (text: string) => string
+  /** 测试端点每次调用回报一次（探针审计挂钩）。 */
+  onTestCall?: () => void
   clearMaps: () => void
   replaceConfig: (next: RedactConfig) => Promise<void>
 }
@@ -139,6 +144,7 @@ export function registerRedactApi(ctx: Context, provider: StatusProvider, log: (
         sendJson(res, 403, { ok: false, error: 'cross-origin denied' })
         return
       }
+      provider.onTestCall?.() // 探针审计：测试框即脱敏预言机，调用频率值得观测
       try {
         const body = await readBody(req)
         const parsed = JSON.parse(body) as { text?: unknown }

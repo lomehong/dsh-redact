@@ -50,6 +50,7 @@ export type RedactKey =
   | 'testRun'
   | 'testResult'
   | 'ruleErrors'
+  | 'auditTitle'
 
 export const zh: Record<RedactKey, string> = {
   nav: '数据脱敏',
@@ -102,6 +103,7 @@ export const zh: Record<RedactKey, string> = {
   testRun: '测试',
   testResult: '结果',
   ruleErrors: '规则警告',
+  auditTitle: '探针行为审计（疑似探测/异常频率）',
 }
 
 export const en: Record<RedactKey, string> = {
@@ -155,4 +157,5 @@ export const en: Record<RedactKey, string> = {
   testRun: 'Test',
   testResult: 'Result',
   ruleErrors: 'Rule warnings',
+  auditTitle: 'Probe audit (suspected probing / abnormal frequency)',
 }

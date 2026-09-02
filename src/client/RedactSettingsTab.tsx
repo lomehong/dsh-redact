@@ -24,6 +24,7 @@ interface StatsDto {
   categories: Record<string, { count: number; lastAt?: number }>
   sessions: number
   ruleErrors: string[]
+  audit?: Array<{ at: number; kind: string; subject: string; message: string }>
 }
 
 const c = {
@@ -266,6 +267,19 @@ export function RedactSettingsTab({ t }: RedactSettingsTabInjected): JSX.Element
           </div>
         )}
       </div>
+
+      {/* ── 探针行为审计 ── */}
+      {(stats?.audit?.length ?? 0) > 0 && (
+        <div style={{ ...sectionStyle, borderColor: c.warn }}>
+          <p style={{ ...sectionTitleStyle, color: c.warn }}>{t('auditTitle')}</p>
+          {stats!.audit!.map((warning, i) => (
+            <div key={i} style={{ padding: '4px 0' }}>
+              <div style={{ fontSize: 13, color: c.text }}>{warning.message}</div>
+              <div style={hintStyle}>{new Date(warning.at).toLocaleString()}</div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* ── 实体别名替换 ── */}
       <div style={sectionStyle}>

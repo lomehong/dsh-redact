@@ -13,6 +13,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis';
 import { type RedactConfig } from './index.ts';
+import type { AuditWarning } from './audit.ts';
 export interface StatusProvider {
     config: () => RedactConfig;
     stats: () => {
@@ -22,8 +23,12 @@ export interface StatusProvider {
         }>;
         sessions: number;
         ruleErrors: string[];
+        /** 探针行为审计告警（新→旧）。 */
+        audit?: AuditWarning[];
     };
     test: (text: string) => string;
+    /** 测试端点每次调用回报一次（探针审计挂钩）。 */
+    onTestCall?: () => void;
     clearMaps: () => void;
     replaceConfig: (next: RedactConfig) => Promise<void>;
 }
