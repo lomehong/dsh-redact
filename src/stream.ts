@@ -279,10 +279,13 @@ export interface StreamDeps {
  *  克隆天然不带标记，恰好是改写请求的唯一合规形态。 */
 const NESTED_REQUESTS = new WeakSet<object>()
 
-/** llm/stream 监听器主体：`(options, next) => Promise<AsyncIterable>`。
- *  cordis waterfall 会 await 监听器返回值，Promise 形态合法。 */
-export function makeStreamListener(deps: StreamDeps): (options: GenerateOptionsLike, next: () => AsyncIterable<StreamChunkLike>) => Promise<AsyncIterable<StreamChunkLike>> {
-  return async (options, next) => {
+/** llm/stream 监听器主体：`(options, next) => AsyncIterable`。
+ *  cordis waterfall 不 await 监听器返回值（契约要求同步返回 AsyncIterable；
+ *  宿主 checkpoint-policy 会对其做 `yield* next()`），因此监听器必须是**同步**
+ *  返回 async generator，不能是 async 函数（那会返回 Promise，导致
+ *  "yield* (intermediate value) is not async iterable"）。 */
+export function makeStreamListener(deps: StreamDeps): (options: GenerateOptionsLike, next: () => AsyncIterable<StreamChunkLike>) => AsyncIterable<StreamChunkLike> {
+  const listen = async function* (options: GenerateOptionsLike, next: () => AsyncIterable<StreamChunkLike>): AsyncGenerator<StreamChunkLike> {
     const nested = NESTED_REQUESTS.has(options)
     let chunks: AsyncIterable<StreamChunkLike> | undefined
     if (!nested) {
@@ -307,13 +310,18 @@ export function makeStreamListener(deps: StreamDeps): (options: GenerateOptionsL
         /* 出站脱敏失败：放原文，不打断调用 */
       }
     }
+    // await 对非 thenable 的 generator 对象原样透传；若下游返回 Promise 也能解开
     if (chunks === undefined) chunks = await next()
-    try {
-      if (nested || !deps.restore()) return chunks
-      const reverse = deps.mapFor(options).reverse
-      return restoreChunks(chunks, new PlaceholderRestorer(reverse, (n) => { deps.onRestore?.(options, n) }), reverse)
-    } catch {
-      return chunks
+    let wrapped: AsyncIterable<StreamChunkLike> | undefined
+    if (!nested && deps.restore()) {
+      try {
+        const reverse = deps.mapFor(options).reverse
+        wrapped = restoreChunks(chunks, new PlaceholderRestorer(reverse, (n) => { deps.onRestore?.(options, n) }), reverse)
+      } catch {
+        wrapped = undefined
+      }
     }
+    yield* (wrapped ?? chunks)
   }
+  return (options, next) => listen(options, next)
 }
