@@ -9,6 +9,8 @@
  *   delta 与 block-end 权威块上还原——UI/工具/会话拿到真实值，provider 侧
  *   从未见过真实数据；
  * - 日志打码：包装 LoggerService exporter 汇出层（独立全局映射，不还原）。
+ * - 出站渠道脱敏：provide('masking') 的 maskTextSync 供 im-channel 出站 IM 文本
+ *   打码——占位符只进不出（对外渠道绝不还原真实值）。套件可选增强（宪章 §1）。
  *
  * 配置来源：settings.yaml 的 redact 节（installSettingsSection，UI 修改热生效），
  * 组合层 config 作为基线。状态持久化于 ~/.dsh/redact/state.json。
@@ -78,6 +80,10 @@ export const Config: z<RedactConfig> = z.object({
 })
 
 export const name = 'redact'
+
+/** 套件可选增强（宪章 §1）：对外提供 `masking` 服务——im-channel 出站 IM
+ *  文本脱敏消费方（maskTextSync）。dsh-redact 缺席时消费方按自身路径显式降级。 */
+export const provide = ['masking']
 
 const NS = 'redact'
 
@@ -313,6 +319,28 @@ export async function apply(ctx: Context, config: RedactConfig): Promise<void> {
     if (store.prune(Date.now()) > 0) persist()
   }, 30 * 60_000)
   ctx.effect(() => () => clearInterval(timer))
+
+  // ── masking 服务（套件可选增强供体，宪章 §1/§3.2） ──
+  // im-channel 出站 IM 文本经 maskTextSync 打码。会话键固定 'im-channel-out'：
+  // 同一真实值跨消息同一占位符（渠道对话内一致）；命中计入统计并落盘。
+  // 规则读 rt 引用——设置热重载自动生效；打码只进不出（对外绝不还原）。
+  const maskingService = {
+    maskTextSync: (text: string): { text: string } => {
+      const map = store.sessionMap('im-channel-out', Date.now())
+      const { text: masked, hits } = maskText(text, rt.rules, map)
+      if (hits.length > 0) {
+        store.recordHits(hits, Date.now())
+        persist()
+      }
+      return { text: masked }
+    },
+  }
+  try {
+    ;(ctx as unknown as { provide?: (name: string, value: unknown) => void }).provide?.('masking', maskingService)
+    log('masking 服务已提供（im-channel 出站脱敏可接入）')
+  } catch (error) {
+    log(`masking 服务提供失败：${error instanceof Error ? error.message : String(error)}`)
+  }
 
   // ── HTTP API ──
   const statusProvider: StatusProvider = {

@@ -18,6 +18,9 @@ export interface RedactConfig {
 }
 export declare const Config: z<RedactConfig>;
 export declare const name = "redact";
+/** 套件可选增强（宪章 §1）：对外提供 `masking` 服务——im-channel 出站 IM
+ *  文本脱敏消费方（maskTextSync）。dsh-redact 缺席时消费方按自身路径显式降级。 */
+export declare const provide: string[];
 /** UI 提交的配置规范化与合法性检查（自定义正则当场编译，非法拒绝保存）。 */
 export declare function normalizeConfigInput(payload: unknown): RedactConfig;
 export declare function apply(ctx: Context, config: RedactConfig): Promise<void>;

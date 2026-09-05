@@ -142,6 +142,9 @@ export interface StreamDeps {
      *  缺省时冻结请求只能放弃出站脱敏（降级不生效，不阻断调用）。 */
     streamDirect?: (options: GenerateOptionsLike) => AsyncIterable<StreamChunkLike>;
 }
-/** llm/stream 监听器主体：`(options, next) => Promise<AsyncIterable>`。
- *  cordis waterfall 会 await 监听器返回值，Promise 形态合法。 */
-export declare function makeStreamListener(deps: StreamDeps): (options: GenerateOptionsLike, next: () => AsyncIterable<StreamChunkLike>) => Promise<AsyncIterable<StreamChunkLike>>;
+/** llm/stream 监听器主体：`(options, next) => AsyncIterable`。
+ *  cordis waterfall 不 await 监听器返回值（契约要求同步返回 AsyncIterable；
+ *  宿主 checkpoint-policy 会对其做 `yield* next()`），因此监听器必须是**同步**
+ *  返回 async generator，不能是 async 函数（那会返回 Promise，导致
+ *  "yield* (intermediate value) is not async iterable"）。 */
+export declare function makeStreamListener(deps: StreamDeps): (options: GenerateOptionsLike, next: () => AsyncIterable<StreamChunkLike>) => AsyncIterable<StreamChunkLike>;
