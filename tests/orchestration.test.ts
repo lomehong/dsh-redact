@@ -148,6 +148,16 @@ describe('编排层（apply 全流程，mock 宿主）', () => {
     await rm(home, { recursive: true, force: true })
   })
 
+  it('别名从配置冷启动即生效（无需 watch 事件）', async () => {
+    const cfg: RedactConfig = { ...BASE_CONFIG, aliases: [{ term: '慧择', replacement: '某公司' }] }
+    const h = await boot(cfg)
+    const listener = h.streamListener()
+    const options = userOptions('平台=慧择，慧择保险经纪有限公司')
+    await collect(await listener(options, () => yieldChunks([{ type: 'finish', reason: { kind: 'stop' } }])))
+    const text = (options.messages[0].content[0] as { text: string }).text
+    expect(text).toBe('平台=某公司，某公司保险经纪有限公司')
+  })
+
   it('llm/stream：出站脱敏 + 入站还原 + 命中进统计', async () => {
     const h = await boot()
     const listener = h.streamListener()

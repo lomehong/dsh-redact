@@ -187,13 +187,18 @@ export class PlaceholderRestorer {
 /** 尾部可完成占位符前缀（`[[`、`[[CODE`、`[[CODE_`、`[[CODE_12`、含结尾 `]]` 的中间态）。
  *  必须 ^ 锚定：holdbackIndex 逐位置测试后缀，无锚时 `[[` 在串中任意处都能命中。 */
 const PLACEHOLDER_PREFIX_RE = /^\[\[(?:[A-Z0-9]{0,24}(?:_(?:\d{0,10})?)?)?$/
+/** 完整占位符**缺最后一个右括号**的形态（`[[CODE_N]`）：占位符被拆在 `]]` 两个
+ *  字符之间时，前一 delta 以此结尾——不扣住会让半截占位符漏给消费方（还原失败）。 */
+const PLACEHOLDER_ONE_BRACKET_RE = /^\[\[[A-Z][A-Z0-9]{0,23}_\d{1,10}\]$/
 
 /** 返回 pending 中可安全发出的截止位置：其后若有疑似占位符前缀则扣住。 */
 export function holdbackIndex(pending: string): number {
   // 只需检查尾部窗口（占位符最长 = 2 + 24 + 1 + 10 + 2 = 39，窗口取 48）
   const windowStart = Math.max(0, pending.length - 48)
   for (let i = windowStart; i < pending.length; i++) {
-    if (PLACEHOLDER_PREFIX_RE.test(pending.slice(i))) return i
+    const tail = pending.slice(i)
+    // 完整占位符（…]]）不扣：restoreSegment 可直接还原
+    if (PLACEHOLDER_PREFIX_RE.test(tail) || PLACEHOLDER_ONE_BRACKET_RE.test(tail)) return i
   }
   // 孤立的结尾 '[' 也可能是跨 chunk 的 '[['
   if (pending.endsWith('[')) return pending.length - 1
