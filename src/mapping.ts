@@ -6,7 +6,7 @@
  * - 日志打码用独立全局映射：只出不进、不还原、不落盘；
  * - 统计按类别累计命中次数与最近命中时间，随 state.json 落盘供设置页展示。
  */
-import { createMaskMap, maskText, type CompiledRule, type MaskMap, type MaskHit } from './rules.ts'
+import { createMaskMap, isPlaceholderShape, maskText, type CompiledRule, type MaskMap, type MaskHit } from './rules.ts'
 
 export const SESSION_TTL_MS = 7 * 24 * 3600_000
 export const MAX_SESSIONS = 200
@@ -141,6 +141,3 @@ export interface PersistedMaps {
   sessions: Record<string, { lastActive: number; reverse: Record<string, string> }>
 }
 
-export function isPlaceholderShape(text: string): boolean {
-  return /^\[\[([A-Z][A-Z0-9]{0,23})_(\d{1,10})\]\]$/.test(text)
-}

@@ -11,6 +11,8 @@
  * - 需要分组提取的规则（key-value 型密钥）用 `d` 标志的 hasIndices 取值区间，
  *   只脱敏值部分，保留变量名上下文。
  */
+/** 判定文本是否为占位符形态（跨模块共用的形态判定）。 */
+export declare function isPlaceholderShape(text: string): boolean;
 /** 双向映射表：forward 值→占位符；reverse 占位符→值；counters 各类别下一个序号。 */
 export interface MaskMap {
     forward: Map<string, string>;
@@ -20,6 +22,15 @@ export interface MaskMap {
 export declare function createMaskMap(): MaskMap;
 /** 占位符→真实值还原；未知的同形字面量原样保留。 */
 export declare function restoreText(text: string, reverse: Map<string, string>): string;
+/** 别名双向还原条目（replacement → term），键长降序（长键先还原防前缀误伤）。 */
+export interface AliasRestoreEntry {
+    key: string;
+    value: string;
+}
+/** 从会话映射提取别名还原条目（reverse 中非占位符形态的键 = 别名 replacement→term）。 */
+export declare function extractAliasEntries(reverse: Map<string, string>): AliasRestoreEntry[];
+/** 完整还原：占位符 + 别名（aliasEntries 缺省时仅占位符）。 */
+export declare function restoreAll(text: string, reverse: Map<string, string>, aliasEntries?: ReadonlyArray<AliasRestoreEntry>): string;
 export type BuiltinCategoryId = 'secret' | 'id' | 'bank' | 'phone' | 'email';
 /** 校验器：正则命中后再做语义校验（校验码/Luhn），不合法的命中不算数。 */
 export type SpanValidator = (match: string) => boolean;

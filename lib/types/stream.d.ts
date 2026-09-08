@@ -13,7 +13,7 @@
  *
  * 热路径全 try/catch 回退：脱敏/还原任何异常都放原文/透传，绝不打断 LLM 调用。
  */
-import { type CompiledRule, type MaskHit, type MaskMap } from './rules.ts';
+import { type AliasRestoreEntry, type CompiledRule, type MaskHit, type MaskMap } from './rules.ts';
 export interface TextBlockLike {
     type: 'text';
     text: string;
@@ -101,14 +101,25 @@ export declare function maskOutbound(options: GenerateOptionsLike, rules: readon
 /**
  * 占位符可能被拆进多个 delta。按块索引缓冲尾部：尾部若是 `[[CODE_N]]` 的
  * 严格前缀（或疑似开头 `[`/`[[`）则扣住不发，避免半截占位符漏给消费方。
+ *
+ * 别名双向还原（replacement → term）：别名键无统一前缀形态，无法用前缀正则
+ * 扣留——改为**尾部通用扣留**：按最长别名键长扣住尾部片段，与下一段拼接后
+ * 在 restoreSegment 内整体还原（长键优先）。无别名条目时退化为原占位符行为。
  */
 export declare class PlaceholderRestorer {
-    private readonly reverse;
-    private readonly onRestore?;
     private buffers;
-    /** 探针审计：每次还原后回报本次处理的占位符形态匹配数（含未知占位——猜测本身即信号）。 */
-    constructor(reverse: Map<string, string>, onRestore?: ((n: number) => void) | undefined);
-    /** 喂入一段 delta 文本，返回可安全发出的部分（已还原完整占位符）。 */
+    private readonly reverse;
+    private readonly aliasEntries;
+    /** 别名尾部扣留长度：最长键 key.length - 1；无别名条目时为 0（不额外扣留）。 */
+    private readonly aliasHold;
+    private readonly onRestore?;
+    /** 探针审计：每次还原后回报本次处理的占位符形态匹配数（含未知占位——猜测本身即信号）。
+     *  aliasEntries：别名双向还原条目（键长降序）；缺席时退化为仅占位符还原。 */
+    constructor(reverse: Map<string, string>, options?: {
+        aliasEntries?: ReadonlyArray<AliasRestoreEntry>;
+        onRestore?: (n: number) => void;
+    });
+    /** 喂入一段 delta 文本，返回可安全发出的部分（已还原完整占位符与完整别名）。 */
     feed(index: number, text: string): string;
     /** 块结束：返回并清空该索引的残余（已还原）。 */
     flush(index: number): string;
@@ -123,9 +134,9 @@ export declare class PlaceholderRestorer {
 /** 返回 pending 中可安全发出的截止位置：其后若有疑似占位符前缀则扣住。 */
 export declare function holdbackIndex(pending: string): number;
 /** 还原一个完整 content 块（block-end 权威块 / 合成块）。无关块原样返回。 */
-export declare function restoreBlock(block: ContentBlockLike, reverse: Map<string, string>): ContentBlockLike;
+export declare function restoreBlock(block: ContentBlockLike, reverse: Map<string, string>, aliasEntries?: ReadonlyArray<AliasRestoreEntry>): ContentBlockLike;
 /** 包装 chunk 流做入站还原；任何异常透传原始 chunk（宁可不还原，不可断流）。 */
-export declare function restoreChunks(chunks: AsyncIterable<StreamChunkLike>, restorer: PlaceholderRestorer, reverse: Map<string, string>): AsyncGenerator<StreamChunkLike>;
+export declare function restoreChunks(chunks: AsyncIterable<StreamChunkLike>, restorer: PlaceholderRestorer, reverse: Map<string, string>, aliasEntries?: ReadonlyArray<AliasRestoreEntry>): AsyncGenerator<StreamChunkLike>;
 export interface StreamDeps {
     /** 取 sessionId 对应映射表（含创建/触碰）。 */
     mapFor(options: GenerateOptionsLike): MaskMap;

@@ -17,6 +17,11 @@
 /** 占位符形态 `[[CODE_N]]`：CODE 为大写字母开头的字母数字（≤24），N 为序号。 */
 const PLACEHOLDER_RE = /\[\[([A-Z][A-Z0-9]{0,23})_(\d{1,10})\]\]/g
 
+/** 判定文本是否为占位符形态（跨模块共用的形态判定）。 */
+export function isPlaceholderShape(text: string): boolean {
+  return /^\[\[([A-Z][A-Z0-9]{0,23})_(\d{1,10})\]\]$/.test(text)
+}
+
 /** 双向映射表：forward 值→占位符；reverse 占位符→值；counters 各类别下一个序号。 */
 export interface MaskMap {
   forward: Map<string, string>
@@ -32,6 +37,31 @@ export function createMaskMap(): MaskMap {
 export function restoreText(text: string, reverse: Map<string, string>): string {
   if (!text.includes('[[')) return text
   return text.replace(PLACEHOLDER_RE, (placeholder) => reverse.get(placeholder) ?? placeholder)
+}
+
+/** 别名双向还原条目（replacement → term），键长降序（长键先还原防前缀误伤）。 */
+export interface AliasRestoreEntry {
+  key: string
+  value: string
+}
+
+/** 从会话映射提取别名还原条目（reverse 中非占位符形态的键 = 别名 replacement→term）。 */
+export function extractAliasEntries(reverse: Map<string, string>): AliasRestoreEntry[] {
+  const out: AliasRestoreEntry[] = []
+  for (const [key, value] of reverse) {
+    if (key === '' || value === '' || isPlaceholderShape(key)) continue
+    out.push({ key, value })
+  }
+  return out.sort((a, b) => b.key.length - a.key.length)
+}
+
+/** 完整还原：占位符 + 别名（aliasEntries 缺省时仅占位符）。 */
+export function restoreAll(text: string, reverse: Map<string, string>, aliasEntries?: ReadonlyArray<AliasRestoreEntry>): string {
+  let out = restoreText(text, reverse)
+  if (aliasEntries !== undefined) {
+    for (const { key, value } of aliasEntries) out = out.split(key).join(value)
+  }
+  return out
 }
 
 /* ─────────────── 规则定义与编译 ─────────────── */
@@ -347,8 +377,18 @@ export function maskText(text: string, rules: readonly CompiledRule[], map: Mask
   if (spans.length === 0) return { text, hits: [] }
   const hits: MaskHit[] = spans.map((span) => ({ code: span.code, value: span.value }))
   for (const span of [...spans].sort((a, b) => a.start - b.start)) {
-    // 别名替换：固定串直接替换，不占映射表（单向，无还原条目）
-    span.placeholder = span.replacement ?? assignPlaceholder(map, span.code, span.value)
+    if (span.replacement !== undefined) {
+      // 别名替换（双向）：出站固定串替换；reverse 写 replacement→term 供本会话
+      // 入站还原（UI/工具/记忆见真实名）。对外渠道 masking 只打码不走 reverse。
+      // 同一替换词多原词时保留更长的原词（更具体：腾讯云 优先于 腾讯）。
+      span.placeholder = span.replacement
+      const existing = map.reverse.get(span.replacement)
+      if (existing === undefined || span.value.length > existing.length) {
+        map.reverse.set(span.replacement, span.value)
+      }
+    } else {
+      span.placeholder = assignPlaceholder(map, span.code, span.value)
+    }
   }
   spans.sort((a, b) => b.start - a.start)
   let out = text

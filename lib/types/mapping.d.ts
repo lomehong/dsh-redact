@@ -46,4 +46,3 @@ export interface PersistedMaps {
         reverse: Record<string, string>;
     }>;
 }
-export declare function isPlaceholderShape(text: string): boolean;

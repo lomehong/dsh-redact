@@ -99,9 +99,9 @@ describe('别名替换：脱敏行为', () => {
     const map = createMaskMap()
     const first = mask('腾讯发布了对腾讯的评价', [{ term: '腾讯', replacement: '某公司' }], map)
     expect(first).toBe('某公司发布了对某公司的评价')
-    // 别名不入映射表：forward/reverse 保持为空
+    // 双向别名：reverse 写入替换词→原词（供本会话入站还原）；forward 仍为空
     expect(map.forward.size).toBe(0)
-    expect(map.reverse.size).toBe(0)
+    expect(map.reverse.get('某公司')).toBe('腾讯')
     // 手机号仍走占位符编号（从 1 开始，未被别名挤占）
     const withPhone = mask('腾讯 ' + PH('TEL', 1), [{ term: '腾讯', replacement: '某公司' }], map)
     expect(withPhone).toBe('某公司 ' + PH('TEL', 1))

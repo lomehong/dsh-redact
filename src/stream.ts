@@ -14,8 +14,10 @@
  * 热路径全 try/catch 回退：脱敏/还原任何异常都放原文/透传，绝不打断 LLM 调用。
  */
 import {
+  extractAliasEntries,
   maskText,
-  restoreText,
+  restoreAll,
+  type AliasRestoreEntry,
   type CompiledRule,
   type MaskHit,
   type MaskMap,
@@ -138,18 +140,44 @@ export function maskOutbound(options: GenerateOptionsLike, rules: readonly Compi
 /**
  * 占位符可能被拆进多个 delta。按块索引缓冲尾部：尾部若是 `[[CODE_N]]` 的
  * 严格前缀（或疑似开头 `[`/`[[`）则扣住不发，避免半截占位符漏给消费方。
+ *
+ * 别名双向还原（replacement → term）：别名键无统一前缀形态，无法用前缀正则
+ * 扣留——改为**尾部通用扣留**：按最长别名键长扣住尾部片段，与下一段拼接后
+ * 在 restoreSegment 内整体还原（长键优先）。无别名条目时退化为原占位符行为。
  */
 export class PlaceholderRestorer {
   private buffers = new Map<number, string>()
+  private readonly reverse: Map<string, string>
+  private readonly aliasEntries: ReadonlyArray<AliasRestoreEntry>
+  /** 别名尾部扣留长度：最长键 key.length - 1；无别名条目时为 0（不额外扣留）。 */
+  private readonly aliasHold: number
+  private readonly onRestore?: (n: number) => void
 
-  /** 探针审计：每次还原后回报本次处理的占位符形态匹配数（含未知占位——猜测本身即信号）。 */
-  constructor(private readonly reverse: Map<string, string>, private readonly onRestore?: (n: number) => void) {}
+  /** 探针审计：每次还原后回报本次处理的占位符形态匹配数（含未知占位——猜测本身即信号）。
+   *  aliasEntries：别名双向还原条目（键长降序）；缺席时退化为仅占位符还原。 */
+  constructor(reverse: Map<string, string>, options?: {
+    aliasEntries?: ReadonlyArray<AliasRestoreEntry>
+    onRestore?: (n: number) => void
+  }) {
+    const aliasEntries = options?.aliasEntries
+    this.reverse = reverse
+    this.aliasEntries = aliasEntries !== undefined && aliasEntries.length > 0 ? aliasEntries : []
+    this.aliasHold = this.aliasEntries.length > 0
+      ? Math.max(...this.aliasEntries.map(e => e.key.length)) - 1
+      : 0
+    if (options?.onRestore !== undefined) this.onRestore = options.onRestore
+  }
 
-  /** 喂入一段 delta 文本，返回可安全发出的部分（已还原完整占位符）。 */
+  /** 喂入一段 delta 文本，返回可安全发出的部分（已还原完整占位符与完整别名）。 */
   feed(index: number, text: string): string {
     if (text === '') return ''
     const pending = (this.buffers.get(index) ?? '') + text
-    const safeEnd = holdbackIndex(pending)
+    const holdPH = holdbackIndex(pending)
+    // 别名尾部扣留：pending 不足最长键长时全扣，否则扣住尾部 aliasHold 字符
+    const holdAlias = this.aliasHold > 0
+      ? Math.max(0, pending.length - this.aliasHold)
+      : pending.length
+    const safeEnd = Math.min(holdPH, holdAlias)
     this.buffers.set(index, pending.slice(safeEnd))
     return safeEnd === 0 ? '' : this.restoreSegment(pending.slice(0, safeEnd))
   }
@@ -170,7 +198,7 @@ export class PlaceholderRestorer {
         try { this.onRestore(matches.length) } catch { /* 审计失败不影响还原 */ }
       }
     }
-    return restoreText(text, this.reverse)
+    return restoreAll(text, this.reverse, this.aliasEntries)
   }
 
   /** 流结束：清空所有残余，按 index 升序返回。 */
@@ -206,23 +234,23 @@ export function holdbackIndex(pending: string): number {
 }
 
 /** 还原一个完整 content 块（block-end 权威块 / 合成块）。无关块原样返回。 */
-export function restoreBlock(block: ContentBlockLike, reverse: Map<string, string>): ContentBlockLike {
+export function restoreBlock(block: ContentBlockLike, reverse: Map<string, string>, aliasEntries?: ReadonlyArray<AliasRestoreEntry>): ContentBlockLike {
   if (block === null || typeof block !== 'object') return block
   switch (block.type) {
     case 'text':
     case 'reasoning':
-      return { ...(block as TextBlockLike), text: restoreText(String((block as TextBlockLike).text ?? ''), reverse) }
+      return { ...(block as TextBlockLike), text: restoreAll(String((block as TextBlockLike).text ?? ''), reverse, aliasEntries) }
     case 'tool-call':
-      return { ...(block as ToolCallBlockLike), arguments: restoreText(String((block as ToolCallBlockLike).arguments ?? ''), reverse) }
+      return { ...(block as ToolCallBlockLike), arguments: restoreAll(String((block as ToolCallBlockLike).arguments ?? ''), reverse, aliasEntries) }
     case 'tool-result':
-      return { ...(block as ToolResultBlockLike), content: (block as ToolResultBlockLike).content.map((b) => restoreBlock(b, reverse)) }
+      return { ...(block as ToolResultBlockLike), content: (block as ToolResultBlockLike).content.map((b) => restoreBlock(b, reverse, aliasEntries)) }
     default:
       return block
   }
 }
 
 /** 包装 chunk 流做入站还原；任何异常透传原始 chunk（宁可不还原，不可断流）。 */
-export async function* restoreChunks(chunks: AsyncIterable<StreamChunkLike>, restorer: PlaceholderRestorer, reverse: Map<string, string>): AsyncGenerator<StreamChunkLike> {
+export async function* restoreChunks(chunks: AsyncIterable<StreamChunkLike>, restorer: PlaceholderRestorer, reverse: Map<string, string>, aliasEntries?: ReadonlyArray<AliasRestoreEntry>): AsyncGenerator<StreamChunkLike> {
   for await (const chunk of chunks) {
     try {
       switch (chunk?.type) {
@@ -239,7 +267,7 @@ export async function* restoreChunks(chunks: AsyncIterable<StreamChunkLike>, res
         }
         case 'block-end': {
           restorer.flush((chunk as { index: number }).index) // 权威块包含全部内容，缓冲作废
-          yield { ...(chunk as object), block: restoreBlock((chunk as { block: ContentBlockLike }).block, reverse) } as StreamChunkLike
+          yield { ...(chunk as object), block: restoreBlock((chunk as { block: ContentBlockLike }).block, reverse, aliasEntries) } as StreamChunkLike
           break
         }
         case 'finish': {
@@ -321,7 +349,8 @@ export function makeStreamListener(deps: StreamDeps): (options: GenerateOptionsL
     if (!nested && deps.restore()) {
       try {
         const reverse = deps.mapFor(options).reverse
-        wrapped = restoreChunks(chunks, new PlaceholderRestorer(reverse, (n) => { deps.onRestore?.(options, n) }), reverse)
+        const aliasEntries = extractAliasEntries(reverse)
+        wrapped = restoreChunks(chunks, new PlaceholderRestorer(reverse, { aliasEntries, onRestore: (n) => { deps.onRestore?.(options, n) } }), reverse, aliasEntries)
       } catch {
         wrapped = undefined
       }

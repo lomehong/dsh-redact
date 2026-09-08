@@ -88,7 +88,7 @@ describe('PlaceholderRestorer：还原计数挂钩', () => {
   it('完整占位符在 feed 时立即还原并回报计数（holdback 只针对跨 chunk 半截占位符）', () => {
     const reverse = new Map<string, string>([[PH('TEL', 1), PH('TEL', 2)]])
     const seen: number[] = []
-    const restorer = new PlaceholderRestorer(reverse, (n) => { seen.push(n) })
+    const restorer = new PlaceholderRestorer(reverse, { onRestore: (n) => { seen.push(n) } })
     expect(restorer.feed(0, PH('TEL', 1))).toBe(PH('TEL', 2))
     expect(restorer.flush(0)).toBe('')
     expect(seen).toEqual([1])
@@ -97,7 +97,7 @@ describe('PlaceholderRestorer：还原计数挂钩', () => {
   it('跨 chunk 拆分的占位符：计数在 flush 完成还原时回报', () => {
     const reverse = new Map<string, string>([[PH('TEL', 1), PH('TEL', 2)]])
     const seen: number[] = []
-    const restorer = new PlaceholderRestorer(reverse, (n) => { seen.push(n) })
+    const restorer = new PlaceholderRestorer(reverse, { onRestore: (n) => { seen.push(n) } })
     expect(restorer.feed(0, '[[TEL')).toBe('')          // 半截：扣住
     expect(restorer.feed(0, '_1]]')).toBe(PH('TEL', 2)) // 补齐：还原
     expect(seen).toEqual([1])
@@ -106,7 +106,7 @@ describe('PlaceholderRestorer：还原计数挂钩', () => {
   it('无占位符的文本不触发计数', () => {
     const reverse = new Map<string, string>([[PH('TEL', 1), PH('TEL', 2)]])
     const seen: number[] = []
-    const restorer = new PlaceholderRestorer(reverse, (n) => { seen.push(n) })
+    const restorer = new PlaceholderRestorer(reverse, { onRestore: (n) => { seen.push(n) } })
     expect(restorer.feed(0, '普通文本 without any placeholder')).toBe('普通文本 without any placeholder')
     expect(restorer.flush(0)).toBe('')
     expect(seen).toHaveLength(0)

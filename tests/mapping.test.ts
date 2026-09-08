@@ -4,7 +4,8 @@ import { homedir } from 'node:os'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { builtinRules, createMaskMap, maskText, restoreText } from '../src/rules.ts'
-import { MappingStore, isPlaceholderShape } from '../src/mapping.ts'
+import { MappingStore } from '../src/mapping.ts'
+import { isPlaceholderShape } from '../src/rules.ts'
 import { dshHome, loadState, saveState, stateFilePath } from '../src/persist.ts'
 
 const ALL_ON = { secret: true, id: true, bank: true, phone: true, email: true }

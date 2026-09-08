@@ -66,8 +66,14 @@ UI 展示 / 工具执行 / 会话记录 ←── [llm/stream 入站] 占位符�
 占位符类别码取规则名中的字母数字（如 `orderID` → `[[ORDERID_1]]`）。
 
 **实体别名替换**：原词 → 固定替换词的字面量映射（如 `腾讯 → 某公司`、`阿里 → XX公司`）。
-与占位符规则的本质差异：**单向、确定性、不还原**——替换词是固定串而非 `[[CODE_N]]`，
-不入映射表，模型与输出只见替换词（例如模型回"某公司"就保持"某公司"）。
+替换词是固定串而非 `[[CODE_N]]`（编号占位符），但**本机会话内双向还原**：模型回复中的
+替换词在入站还原层转回真实名，主人的 UI 展示、工具执行、记忆沉淀全程见真实名；
+仅对外渠道（im-channel 出站，经 masking 只打码不还原）保持替换词——真实名不出境。
+- 原词按**字面量**匹配（非正则），更长的原词优先（`腾讯云` 先于 `腾讯`）；
+- **优先级低于全部敏感数据检测**：与密钥/证件/银行卡等命中重叠时以脱敏为准，
+  绝不在敏感命中区里掏洞；
+- 对日志打码同样生效；替换条目随会话映射持久化（重启后还原仍生效）；
+- 上限 100 条，原词/替换词各 ≤64 字符，不能是占位符形态 `[[CODE_N]]`。
 - 原词按**字面量**匹配（非正则），更长的原词优先（`腾讯云` 先于 `腾讯`）；
 - **优先级低于全部敏感数据检测**：与密钥/证件/银行卡等命中重叠时以脱敏为准，
   绝不在敏感命中区里掏洞；
@@ -89,6 +95,7 @@ HTTP API（同源回环；写路由 sameOrigin 校验）：`GET|PUT /redact/api/
 |---|---|---|
 | 0.1.1-rc.2 | ✅ | 可变请求走原地重赋路径（当前现役运行时实测形态） |
 | 0.1.2-alpha.3 | ✅ | 冻结请求（agent-loop deepFreeze）走克隆二次下发路径；settings 迁移至 `SettingsProvider.register`（rc.2 即已内置，双版本同 API） |
+| 0.1.3-alpha.2 | ✅ | 逐包 diff 核对：session descriptor/prompt schema 零变化；app-boot 仅 .env 代理白名单新增；system-prompt/workspace/agent-presets/api-gateway 均为新增功能不改既有契约；cordis 4.0.2 与 cordis-plugin-loader 1.0.3 版本相同——插件零改动 |
 | 0.1.2-alpha.4 | ✅ | 对照 monorepo 源码逐契约 diff 核对：llm/cordis/settings/webserver 零变化，agent-loop 仅类型标注（SessionSeq），client 为 UI 性能（keyed observables/聊天节流）与增量类型；97 用例回归全绿，无需改动 |
 
 兼容要点（0.1.2 起）：上游 invariant 对带 `markAgentLoopRequest` 标记的请求做
