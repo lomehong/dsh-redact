@@ -86,6 +86,27 @@ describe('出站脱敏：消息遍历', () => {
     const bad = { provider: 'p', model: 'm', get messages(): never { throw new Error('boom') } } as unknown as GenerateOptionsLike
     expect(maskOutbound(bad, rules, createMaskMap())).toEqual([])
   })
+  it('0.1.5 形态回归：system prompt 走 role:system 首条消息（无 options.system）照常脱敏', () => {
+    // dsh 0.1.5 起 GenerateOptions.system 字段删除，system prompt 以 messages 首条
+    // role:'system' 消息承载——脱敏必须经 messages 路径继续命中。
+    const options: GenerateOptionsLike = {
+      provider: 'deepseek',
+      model: 'chat',
+      messages: [
+        { id: 'sys-1', role: 'system', content: [{ type: 'text', text: '客服热线 13912345678' }] },
+        textMessage('手机 13812345678'),
+      ],
+      sessionId: 'sess-9',
+    }
+    const map = createMaskMap()
+    const hits = maskOutbound(options, rules, map)
+    const sysContent = (options.messages[0].content[0] as { text: string }).text
+    const userContent = (options.messages[1].content[0] as { text: string }).text
+    expect(sysContent).toBe('客服热线 [[TEL_1]]')
+    expect(userContent).toBe('手机 [[TEL_2]]')
+    expect(options.system).toBeUndefined()
+    expect(hits).toHaveLength(2)
+  })
 })
 
 describe('流式还原：边界缓冲', () => {
