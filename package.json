@@ -1,6 +1,6 @@
 {
   "name": "@dsh-extra/dsh-redact",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "数据脱敏插件：发往 LLM 的消息一致性假名脱敏 + 模型输出占位符自动还原 + 日志打码",
   "type": "module",
   "main": "lib/index.js",
