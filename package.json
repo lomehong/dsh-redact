@@ -49,6 +49,7 @@
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-client-ui-plugin-manager": "^0.1.6-alpha.2",
     "@deepseek-ai/schemastery": ">=0.1.0",
     "@types/node": "^20.0.0",
     "@types/react": "~18.3.1",

@@ -370,3 +370,18 @@ export function RedactSettingsTab({ t }: RedactSettingsTabInjected): JSX.Element
     </div>
   )
 }
+
+/**
+ * 插件管理页配置入口（plugins.bundle.config 槽位）：
+ * `view: 'summary'` 渲染插件卡片上的一行简介；`view: 'page'` 渲染完整配置表单。
+ * 本组件自身无 hooks（owner 可能以普通函数调用渲染器），有状态的表单全在 RedactSettingsTab 内。
+ */
+export interface RedactPluginConfigProps {
+  view: 'summary' | 'page'
+  t: (key: RedactKey) => string
+}
+
+export function RedactPluginConfig(props: RedactPluginConfigProps): JSX.Element {
+  if (props.view === 'page') return <RedactSettingsTab t={props.t} />
+  return <span style={{ fontSize: 12, color: c.textSecondary }}>{props.t('summary')}</span>
+}

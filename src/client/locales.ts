@@ -1,6 +1,7 @@
 /** 「数据脱敏」设置页文案（zh/en）。 */
 export type RedactKey =
   | 'nav'
+  | 'summary'
   | 'loading'
   | 'statusError'
   | 'save'
@@ -54,6 +55,7 @@ export type RedactKey =
 
 export const zh: Record<RedactKey, string> = {
   nav: '数据脱敏',
+  summary: '发往模型的敏感信息自动脱敏，回复中的占位符自动还原，宿主日志同步打码',
   loading: '加载中…',
   statusError: '配置获取失败',
   save: '保存',
@@ -108,6 +110,7 @@ export const zh: Record<RedactKey, string> = {
 
 export const en: Record<RedactKey, string> = {
   nav: 'Data Redaction',
+  summary: 'Masks sensitive data outbound to the model, restores placeholders in replies, and masks host logs',
   loading: 'Loading…',
   statusError: 'Failed to load config',
   save: 'Save',
