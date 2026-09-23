@@ -62,6 +62,9 @@ export const Config = z.object({
   restoreOutput: z.boolean().default(true).volatile(),
   /** 日志输出打码（只打码不还原）。 */
   maskLogs: z.boolean().default(true).volatile(),
+  // 注意：categories 对象本身不得 volatile——cordis 禁止 volatile 嵌套
+  // （"volatile fields require a fixed object path without an enclosing volatile
+  // field"，宿主 resolveConfig 直接拒绝加载）；只有叶子字段可 volatile。
   categories: z.object({
     secret: z.boolean().default(true).volatile(),
     id: z.boolean().default(true).volatile(),
@@ -70,7 +73,7 @@ export const Config = z.object({
     email: z.boolean().default(true).volatile(),
   }).default({
     secret: true, id: true, bank: true, phone: true, email: true,
-  }).volatile(),
+  }),
   customRules: z.array(z.object({
     name: z.string(),
     pattern: z.string(),

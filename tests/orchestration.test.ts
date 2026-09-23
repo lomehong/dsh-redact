@@ -288,3 +288,23 @@ describe('normalizeConfigInput', () => {
     expect(() => normalizeConfigInput({ customRules: [{ name: 'a', pattern: '([bad' }] })).toThrow(/正则非法/)
   })
 })
+
+describe('Config schema（0.1.7 宿主 resolveConfig 约束）', () => {
+  it('volatile 字段不得嵌套在 volatile 对象内（否则宿主拒绝加载插件）', async () => {
+    const { Config } = await import('../src/index.ts')
+    const violations: string[] = []
+    const walk = (schema: any, path: string, underVolatile: boolean): void => {
+      if (schema === null || typeof schema !== 'object') return
+      const selfVolatile = schema.meta?.volatile === true
+      if (selfVolatile && underVolatile) violations.push(path || '<root>')
+      const childVolatile = underVolatile || selfVolatile
+      // 对象 schema 的子字段在 schema.dict；数组 schema 的元素在 schema.inner
+      if (schema.dict) {
+        for (const [key, child] of Object.entries(schema.dict)) walk(child, `${path}.${key}`, childVolatile)
+      }
+      if (Array.isArray(schema.inner)) for (const child of schema.inner) walk(child, `${path}[]`, childVolatile)
+    }
+    walk(Config, '', false)
+    expect(violations).toEqual([])
+  })
+})
