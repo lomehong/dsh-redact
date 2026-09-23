@@ -16,7 +16,6 @@
  * 组合层 config 作为基线。状态持久化于 ~/.dsh/redact/state.json。
  */
 import { join } from 'node:path'
-import { readFileSync } from 'node:fs'
 import z from '@deepseek-ai/schemastery'
 import type { Context } from '@deepseek-ai/cordis'
 import {
@@ -54,31 +53,33 @@ export interface RedactConfig {
   aliases?: TermRuleInput[]
 }
 
-export const Config: z<RedactConfig> = z.object({
+// 0.1.7：全部可编辑字段 .volatile()——volatile 即设置页可热更字段，
+// UI 经 settings.replace 写回也只放行 volatile 路径。
+export const Config = z.object({
   /** 发往 LLM 的消息脱敏（总开关）。 */
-  maskLlm: z.boolean().default(true),
+  maskLlm: z.boolean().default(true).volatile(),
   /** 模型输出中的占位符还原为真实值。 */
-  restoreOutput: z.boolean().default(true),
+  restoreOutput: z.boolean().default(true).volatile(),
   /** 日志输出打码（只打码不还原）。 */
-  maskLogs: z.boolean().default(true),
+  maskLogs: z.boolean().default(true).volatile(),
   categories: z.object({
-    secret: z.boolean().default(true),
-    id: z.boolean().default(true),
-    bank: z.boolean().default(true),
-    phone: z.boolean().default(true),
-    email: z.boolean().default(true),
+    secret: z.boolean().default(true).volatile(),
+    id: z.boolean().default(true).volatile(),
+    bank: z.boolean().default(true).volatile(),
+    phone: z.boolean().default(true).volatile(),
+    email: z.boolean().default(true).volatile(),
   }).default({
     secret: true, id: true, bank: true, phone: true, email: true,
-  }),
+  }).volatile(),
   customRules: z.array(z.object({
     name: z.string(),
     pattern: z.string(),
-  })).default([]),
+  })).default([]).volatile(),
   aliases: z.array(z.object({
     term: z.string(),
     replacement: z.string(),
-  })).default([]),
-})
+  })).default([]).volatile(),
+}) as unknown as z<RedactConfig>
 
 export const name = 'redact'
 
@@ -94,14 +95,9 @@ interface LlmStreamEvents {
   on(event: 'llm/stream', listener: (options: GenerateOptionsLike, next: () => AsyncIterable<StreamChunkLike>) => Promise<AsyncIterable<StreamChunkLike>> | AsyncIterable<StreamChunkLike>): void
 }
 
-/** dsh settings 服务的最小结构视图（0.1.1-rc.2 与 0.1.2+ 同款 register API）。 */
+/** dsh settings 服务的最小结构视图（0.1.7：仅剩整节 replace；ns = profile 条目 id）。 */
 interface SettingsProviderLike {
-  register(ns: string, schema: unknown, options?: { base?: unknown }): {
-    get(): RedactConfig
-    watch(callback: (next: RedactConfig, prev: RedactConfig) => void | Promise<void>): () => void
-    update(patch: object): Promise<void>
-    replace(section: object): Promise<void>
-  }
+  replace(ns: string, section: object, expectedRevision?: number): Promise<void>
 }
 
 /** dsh llm 服务的最小结构视图（冻结请求二次下发用）。 */
@@ -165,6 +161,17 @@ export function normalizeConfigInput(payload: unknown): RedactConfig {
   }
 }
 
+/** Volatile 引用解引（0.1.7 loader 传 get() 引用；0.1.6/组合基线为纯值直通）。 */
+function unwrapConfig(c: RedactConfig): RedactConfig {
+  const read = (v: unknown): unknown =>
+    v !== null && typeof v === 'object' && typeof (v as { get?: unknown }).get === 'function'
+      ? (v as { get(): unknown }).get()
+      : v
+  const out = { ...c } as Record<string, unknown>
+  for (const k of Object.keys(out)) out[k] = read(out[k])
+  return out as unknown as RedactConfig
+}
+
 export async function apply(ctx: Context, config: RedactConfig): Promise<void> {
   // 优先宿主 logger；必须以成员调用保持 this 绑定（cordis LoggerService this 陷阱）
   const log: (line: string) => void = (() => {
@@ -202,66 +209,28 @@ export async function apply(ctx: Context, config: RedactConfig): Promise<void> {
     log(`配置已应用：LLM 脱敏=${next.maskLlm ? '开' : '关'} 输出还原=${next.restoreOutput ? '开' : '关'} 日志打码=${next.maskLogs ? '开' : '关'}；内置类别=${on.join(',') || '无'} 自定义规则=${next.customRules.length} 别名=${next.aliases?.length ?? 0}`)
   }
 
-  // ── 配置来源：settings.register（0.1.1-rc.2 与 0.1.2+ 同款 API）。
-  // 组合层 config 为 base 基线；scope.get 为解析值；watch 热重载；replace 供 UI 整节保存 ──
-  let readConfig: () => RedactConfig = () => config
+  // ── 配置来源（0.1.7）：组合层 config 即权威（volatile 字段由 loader 原位热更）；
+  // loader/volatile-update 触发重建；UI 整节保存经 settings.replace 写回条目配置 ──
+  let readConfig: () => RedactConfig = () => unwrapConfig(config)
   let replaceConfigBySettings: ((next: RedactConfig) => Promise<void>) | undefined
-  /** 是否已通过 settings 注册（含初始化重建）应用了配置——避免冷启动 < 冻结配置。 */
-  let settingsApplied = false
-  const rebuildFromSettings = (): void => {
+  const rebuildFromConfig = (): void => {
     try {
-      const config = { ...readConfig() }
-      // aliases 兜底：scope.get() 不回传 aliases 字段（SettingsProvider 限制），
-      // 从 settings.yaml 的 **redact 节内** 提取手写条目。正则严格锚定顶层
-      // `redact:` 节范围——绝不全文件扫描（会误吞其他节的 `- term:` 形态配置）。
-      // UI 保存（scope.replace）也写入同一节，故两者天然一致。
-      if (config.aliases === undefined || config.aliases.length === 0) {
-        try {
-          const settingsPath = join(dshHome(), 'settings.yaml')
-          const raw = readFileSync(settingsPath, 'utf8')
-          const sectionMatch = raw.match(/^redact:\s*$([\s\S]*?)(?=^\S|\Z)/m)
-          const section = sectionMatch?.[1] ?? ''
-          const fileAliases: TermRuleInput[] = []
-          const re = /^\s*-\s+term:\s+(.+?)\s*$/gm
-          let m: RegExpExecArray | null
-          while ((m = re.exec(section)) !== null) {
-            const term = m[1].trim().replace(/^['"]|['"]$/g, '')
-            const after = section.slice(m.index + m[0].length)
-            const rm = after.match(/^\s*replacement:\s+(.+?)\s*$/m)
-            if (rm) {
-              const replacement = rm[1].trim().replace(/^['"]|['"]$/g, '')
-              if (term && replacement && term !== replacement) fileAliases.push({ term, replacement })
-            }
-          }
-          if (fileAliases.length > 0) config.aliases = fileAliases
-        } catch { /* 文件不存在/解析失败：不覆盖 settings 服务返回的配置 */ }
-      }
-      rebuild(config)
+      rebuild({ ...readConfig() })
     } catch (error) {
       log(`配置变更应用失败：${error instanceof Error ? error.message : String(error)}`)
     }
   }
+  try {
+    ctx.on?.('loader/volatile-update', () => rebuildFromConfig())
+  } catch { /* 0.1.6 运行时无此事件：保持组合层基线 */ }
   ctx.inject(['settings'], (sctx: unknown) => {
     const settings = (sctx as { settings?: SettingsProviderLike }).settings
-    if (settings === undefined || typeof settings.register !== 'function') return
-    try {
-      const scope = settings.register(NS, Config, { base: config })
-      readConfig = () => scope.get()
-      scope.watch(() => rebuildFromSettings())
-      replaceConfigBySettings = (next) => scope.replace(next)
-      // 冷启动：立即用 settings 解析值（含 aliases 等手写进 settings.yaml 的配置）重建，
-      // 不依赖后续 watch 事件——否则别名/自定义修改在重启后不会生效。
-      settingsApplied = true
-      rebuildFromSettings()
-    } catch (error) {
-      log(`设置节注册失败（配置退回组合层基线）：${error instanceof Error ? error.message : String(error)}`)
-    }
+    if (settings === undefined || typeof settings.replace !== 'function') return
+    replaceConfigBySettings = (next) => settings.replace(NS, next)
   })
 
-  // 冷启动规则初始化：若 settings 已应用（注入同步回调已重建），跳过基线；
-  // 否则（settings 服务缺席或异步注入）用组合层基线作为兜底——后续 settings
-  // 注入后再由 rebuildFromSettings 覆盖。
-  if (!settingsApplied) rt.rules = compileRules(config)
+  // 冷启动规则初始化：volatile 热更事件未触发前，用组合层基线（解引后）兜底。
+  rt.rules = compileRules(unwrapConfig(config))
 
   // ── 映射表与持久化（启动载入 → 去抖落盘 → 退出兜底） ──
   const store = new MappingStore()

@@ -61,29 +61,11 @@ function makeHarness() {
         fn({ webServer, effect: (f: () => () => void) => { disposers.push(f()) } })
         return
       }
-      // settings 服务 mock：语义对齐 SettingsProvider.register（get/watch/update/replace）
+      // settings 服务 mock：语义对齐 0.1.7 SettingsForms（replace 按 ns 整节写回；
+      // volatile 热更经 ctx 的 loader/volatile-update 事件驱动）
       const settingsService = {
-        register(_ns: string, _schema: unknown, options?: { base?: unknown }) {
-          const scope: { base: unknown; user: Record<string, unknown>; watchers: Set<(next: unknown) => void> } = {
-            base: options?.base, user: {}, watchers: new Set(),
-          }
-          const get = (): Record<string, unknown> => ({ ...((scope.base ?? {}) as Record<string, unknown>), ...scope.user })
-          return {
-            get,
-            watch: (cb: (next: unknown) => void) => {
-              scope.watchers.add(cb)
-              return () => { scope.watchers.delete(cb) }
-            },
-            update: async (patch: Record<string, unknown>) => {
-              Object.assign(scope.user, patch)
-              for (const cb of [...scope.watchers]) cb(get())
-            },
-            replace: async (section: Record<string, unknown>) => {
-              scope.user = { ...section }
-              settingsWrites.push({ ...section })
-              for (const cb of [...scope.watchers]) cb(get())
-            },
-          }
+        replace: async (ns: string, section: Record<string, unknown>) => {
+          settingsWrites.push({ ns, ...section })
         },
       }
       fn({ settings: settingsService, effect: (f: () => () => void) => { disposers.push(f()) } })
