@@ -58,7 +58,7 @@ const primaryBtn: CSSProperties = {
 }
 const inputStyle: CSSProperties = {
   padding: '4px 8px', borderRadius: 6, border: `1px solid ${c.border}`,
-  background: c.bgBase, color: c.text, fontSize: 13, minWidth: 0, width: '100%', fontFamily: 'monospace',
+  background: c.bgBase, color: c.text, fontSize: 13, minWidth: 0, width: '100%', fontFamily: 'var(--ds-font-family-code, ui-monospace), ui-monospace, monospace',
 }
 const hintStyle: CSSProperties = {
   fontSize: 12, color: c.textSecondary, lineHeight: 1.5,
@@ -329,7 +329,7 @@ export function RedactSettingsTab({ t }: RedactSettingsTabInjected): JSX.Element
           )}
         </div>
         {testOutput !== '' && (
-          <div style={{ ...sectionStyle, marginTop: 8, background: c.bgLayer, fontFamily: 'monospace', fontSize: 12, wordBreak: 'break-all' }}>
+          <div style={{ ...sectionStyle, marginTop: 8, background: c.bgLayer, fontFamily: 'var(--ds-font-family-code, ui-monospace), ui-monospace, monospace', fontSize: 12, wordBreak: 'break-all' }}>
             {testOutput}
           </div>
         )}
